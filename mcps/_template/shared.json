@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "service-name": {
+      "command": "npx",
+      "args": ["-y", "@org/mcp-package-name"],
+      "env": {}
+    }
+  }
+}

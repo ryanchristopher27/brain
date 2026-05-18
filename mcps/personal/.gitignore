@@ -1,0 +1,6 @@
+# Extra safety net — nothing in personal/ should contain secrets,
+# but if a file accidentally includes one, this prevents it from being committed.
+# The real rule: use env var references (${MY_KEY}), not actual values.
+
+# Uncomment to block all JSON from being committed (strictest):
+# *.json

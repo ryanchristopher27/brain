@@ -1,0 +1,17 @@
+---
+description: [Domain name] domain rules — [one-line description of when this activates]
+globs: ["**/*.ext", "src/**/*"]
+alwaysApply: false
+---
+
+# [Domain Name] Rules
+
+[Domain-specific rules for Cursor. Same content as rules.md, formatted for Cursor's rule system.]
+
+## [Rule Category 1]
+
+- [Rule]
+
+## [Rule Category 2]
+
+- [Rule]

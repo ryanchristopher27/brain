@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "service-name": {
+      "command": "npx",
+      "args": ["-y", "@org/mcp-package-name"],
+      "env": {
+        "API_KEY": "${SERVICE_API_KEY}",
+        "OTHER_CONFIG": "${SERVICE_OTHER_CONFIG}"
+      }
+    }
+  }
+}

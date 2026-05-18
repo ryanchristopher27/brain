@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "PreToolUse": [],
+    "PostToolUse": [],
+    "Notification": [],
+    "Stop": []
+  },
+  "mcpServers": {}
+}

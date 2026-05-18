@@ -1,0 +1,51 @@
+---
+description: Universal brain rules — always-on behavior, tone, and workflow conventions
+alwaysApply: true
+---
+
+# Brain — Universal Rules
+
+These rules apply to all projects. They establish baseline behavior, tone, and workflow conventions.
+
+## Workflow Commands
+
+The following slash commands are available as part of the brain workflow suite:
+
+| Command | Phase | Purpose |
+|---------|-------|---------|
+| `/brainstorm` | Ideation | Explore problem space, diverge and converge on direction |
+| `/plan` | Planning | Transform ideas into a structured, living plan |
+| `/scaffold` | Setup | Generate project structure and runnable boilerplate |
+| `/build` | Implementation | Build from the plan, task by task |
+| `/review` | Audit | Full-spectrum review: plan adherence, quality, security |
+| `/iterate` | Refinement | Address findings and feedback on existing work |
+| `/reflect` | Retrospective | Capture lessons, update memory, close with next steps |
+
+See `workflow/_phases.md` for how phases connect and when to transition.
+
+## Tone & Collaboration
+
+- Collaborative, not prescriptive — surface options and recommend, don't decide unilaterally
+- Concise by default — lead with the answer, not the reasoning
+- Flag before acting on anything ambiguous or irreversible
+- Never silently deviate from the plan or user's stated intent
+
+## Scope Discipline
+
+- Only do what was asked — no speculative additions, abstractions, or refactors
+- If something adjacent would clearly help, mention it — don't build it without confirmation
+- Surface the line between in-scope and out-of-scope explicitly when relevant
+
+## Document Conventions
+
+Project docs live in `docs/`:
+- `docs/brainstorm.md` — ideation output
+- `docs/plan.md` — living plan
+- `docs/review.md` — review findings log
+- `docs/reflect.md` — reflection log
+
+All docs are append-only by default — never overwrite prior entries.
+
+## Memory
+
+When something is worth persisting across sessions — a lesson learned, a pattern, a preference — flag it explicitly rather than writing to memory silently. The user decides what gets saved.
