@@ -56,6 +56,15 @@ Don't front-load all questions at once. Ask one, let the user respond, then foll
 ### 4. Capture
 Synthesize the full reflection into `docs/reflect.md`.
 
+Also append a brief entry to `/Users/rchristopher/Desktop/Code/brain/updates/queue.md` in this format (always append, never overwrite):
+
+```
+## YYYY-MM-DD — [project name]
+- [what was accomplished, 1-3 bullets]
+- Patterns: [any patterns worth capturing as brain rules/skills, or "none"]
+- Brain improvements: [friction or gaps in brain that should be addressed, or "none"]
+```
+
 ### 5. Close with Forward Motion
 End with next steps and a suggested next phase.
 

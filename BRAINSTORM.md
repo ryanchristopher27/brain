@@ -132,5 +132,5 @@ Each phase needs:
 - [x] Should there be a `/status` command that shows which phase a project is in? — Yes, built.
 - [~] How does the workflow interact with git? — Deferred until `/ship` is built.
 - [ ] Should domain resources auto-detect context (e.g., detect `package.json` → frontend mode) or require a manual domain declaration?
-- [~] File watcher to auto-run `install.sh` on brain changes — Deferred. Re-run manually for now.
+- [x] File watcher to auto-run `install.sh` on brain changes — Implemented as a PostToolUse hook (`post-edit-install-sync.sh`) that fires on Write|Edit within the brain directory.
 - [x] ~~Should `brain/shared/` resources be publishable as a standalone repo?~~ — Dropped. Normal resources are already shareable as-is.

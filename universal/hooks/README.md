@@ -64,6 +64,18 @@ Fires when Claude finishes a response (session end or task complete).
 
 **Receives via stdin:** stop reason
 
+### PreCompact
+Fires before a long conversation is compacted (summarized to free context). Stdout is **injected directly into the compaction prompt**, making it the mechanism for controlling what survives summarization.
+
+**Common uses:**
+- Inject open questions, active decisions, or in-progress state that must not be lost
+- Surface project-specific context the summary should emphasize
+- Ensure memory or queue state is referenced in the compacted summary
+
+**Receives via stdin:** compaction reason/trigger
+
+**Note:** Unlike other hooks, stdout here is added to the compaction prompt itself — not shown to the user or Claude as a message. Keep output focused and structured so the summarizer can use it.
+
 ---
 
 ## Adding a Hook

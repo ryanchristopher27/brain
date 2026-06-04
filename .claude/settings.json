@@ -1,9 +1,56 @@
 {
   "hooks": {
     "PreToolUse": [],
-    "PostToolUse": [],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/rchristopher/Desktop/Code/brain/universal/hooks/scripts/post-edit-install-sync.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/rchristopher/Desktop/Code/brain/universal/hooks/scripts/post-edit-spec-sync-check.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/rchristopher/Desktop/Code/brain/universal/hooks/scripts/post-edit-brainstorm-guard.sh"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/rchristopher/Desktop/Code/brain/universal/hooks/scripts/pre-compact-brain-context.sh"
+          }
+        ]
+      }
+    ],
     "Notification": [],
-    "Stop": []
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/rchristopher/Desktop/Code/brain/universal/hooks/scripts/stop-reflect-nudge.sh"
+          }
+        ]
+      }
+    ]
   },
   "mcpServers": {}
 }
