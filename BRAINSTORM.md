@@ -44,6 +44,13 @@ A modular, hierarchical vault of LLM resources — rules, skills, hooks, MCPs, p
 - **Prompts** → stored in `brain/shared/prompts/`, referenced by both tools
 - **Install** → `install.sh` detects which tools are present, backs up existing configs, wires everything idempotently
 
+### First Domain: Frontend (2026-06-06)
+Consolidated two external frontend-design suites into `domains/frontend/` — the first populated L2 domain. Full plan + decisions log in `docs/plan.md`.
+- **Sources:** ui-ux-pro-max-skill (MIT) for the data knowledge base + search; impeccable (Apache 2.0) for the design spine + anti-pattern detector. Vendored (not submodule); attribution in `domains/frontend/NOTICE` + `LICENSE-*`.
+- **Structure:** `rules.md` (priority-ladder spine) · `references/` (9 synthesized topic guides) · `data/` + `scripts/` (vendored stdlib-Python search) · `scripts/detector/` (vendored Node linter, 82 rules) · `commands/design.md` (single `/design` verb: craft·shape·critique·audit·polish·system).
+- **Key decisions:** impeccable spine wins conflicts, ui-ux-pro-max backs with concrete data; curated command set (remaining verbs folded into `rules.md` as named techniques); skipped both repos' CLI / browser extension / website / live-loop. `/design` resolves the brain script path at runtime via the symlinked command file.
+- **Pattern this establishes:** distill external skills into the brain-native domain shape (rules + references + detect + cursor-rule), keep heavy tooling dependency-light and degrade-gracefully, vendor with attribution.
+
 ---
 
 ## Directory Structure (Planned)
@@ -131,6 +138,6 @@ Each phase needs:
 - [ ] Should phases be strictly linear or can they be invoked out of order?
 - [x] Should there be a `/status` command that shows which phase a project is in? — Yes, built.
 - [~] How does the workflow interact with git? — Deferred until `/ship` is built.
-- [ ] Should domain resources auto-detect context (e.g., detect `package.json` → frontend mode) or require a manual domain declaration?
+- [x] Should domain resources auto-detect context (e.g., detect `package.json` → frontend mode) or require a manual domain declaration? — Both. The frontend domain (first to ship) uses `detect.md` auto-detection signals plus a `domains: frontend` manual override in `CLAUDE.md`.
 - [x] File watcher to auto-run `install.sh` on brain changes — Implemented as a PostToolUse hook (`post-edit-install-sync.sh`) that fires on Write|Edit within the brain directory.
 - [x] ~~Should `brain/shared/` resources be publishable as a standalone repo?~~ — Dropped. Normal resources are already shareable as-is.

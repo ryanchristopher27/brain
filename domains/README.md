@@ -61,7 +61,7 @@ And in `.cursor/rules/`:
 
 | Domain | Status | Activates when |
 |--------|--------|---------------|
-| *(none yet)* | — | — |
+| frontend | Scaffolded (content WIP — see `docs/plan.md`) | `package.json` + a UI framework, a Tailwind/PostCSS config, or component source files (`.tsx/.jsx/.vue/.svelte`) |
 
 ---
 

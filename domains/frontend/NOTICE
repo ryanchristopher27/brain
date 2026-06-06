@@ -1,0 +1,29 @@
+Brain — Frontend Domain
+=======================
+
+This domain consolidates curated subsets of two upstream open-source projects. Their original
+licenses apply to the vendored material and are preserved here.
+
+-----------------------------------------------------------------------
+1. ui-ux-pro-max-skill
+   Author:  NextLevelBuilder
+   License: MIT
+   Source:  https://github.com/nextlevelbuilder/ui-ux-pro-max-skill
+
+   Vendored: design knowledge-base CSVs (data/) and the BM25 search +
+   design-system generation scripts (scripts/: core.py, search.py,
+   design_system.py). Distilled guidance derived from its skills appears
+   in rules.md and references/.
+-----------------------------------------------------------------------
+2. impeccable
+   Author:  Paul Bakaus
+   License: Apache 2.0
+   Source:  https://github.com/pbakaus/impeccable
+
+   Vendored: the deterministic anti-pattern detector (scripts/detector/).
+   Distilled guidance derived from its skill, 7 domain references, and
+   command vocabulary appears in rules.md, references/, and commands/design.md.
+-----------------------------------------------------------------------
+
+Full upstream LICENSE texts accompany the vendored files where required. When updating either
+upstream source, refresh this NOTICE and the corresponding vendored material together.

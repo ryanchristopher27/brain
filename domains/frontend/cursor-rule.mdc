@@ -1,0 +1,58 @@
+---
+description: Frontend domain rules — design, UX, accessibility, and craft for UI projects (React, Next.js, Vue, Svelte, Astro, Tailwind/shadcn)
+globs: ["**/*.tsx", "**/*.jsx", "**/*.vue", "**/*.svelte", "**/*.astro", "**/*.css", "**/*.scss", "**/components/**", "**/app/**", "tailwind.config.*"]
+alwaysApply: false
+---
+
+# Frontend Rules
+
+Design and ship production-grade interfaces — real working code, committed choices, exceptional
+craft. Rules are ordered by a **priority ladder**: when forced to choose, the lower number wins.
+**Register sets the defaults** — Brand (design IS the product: landing/marketing/portfolio) vs.
+Product (design SERVES the product: app/dashboard/tool). Mirrors the brain frontend domain
+`rules.md`; the `/design` command carries the deep references and tooling.
+
+## 1. Accessibility (critical)
+- Body contrast ≥ 4.5:1; large text (≥18px / bold ≥14px) ≥ 3:1. Placeholder text is body text — same 4.5:1, not muted gray. Light-gray body is the #1 reason AI designs read as hard to read.
+- Gray text on a colored background looks washed out — use a darker shade of the bg's hue or a transparency of the text color.
+- Never remove focus rings; everything keyboard-operable with accessible names; meaningful alt text; no skipped heading levels.
+
+## 2. Touch & Interaction (critical)
+- Touch targets ≥ 44×44px, ≥ 8px apart; no hover-only affordances.
+- Every async action shows loading + error feedback; skeletons over center-screen spinners.
+- Dropdowns escape clipping containers (`<dialog>`/popover, `position: fixed`, or a portal).
+- Product: ship all component states (default, hover, focus, active, disabled, loading, error) with a consistent vocabulary across the surface.
+
+## 3. Performance (high)
+- Reserve media space (width/height or aspect-ratio) to keep CLS < 0.1; lazy-load below the fold; prefer WebP/AVIF.
+- Animate `transform`/`opacity`, never layout properties.
+- Don't gate content visibility on a class-triggered transition — it ships blank on hidden tabs / headless renderers.
+
+## 4. Style selection (high)
+- Match style to product type and hold it consistently; pick by intent, not reflex. SVG icons, never emoji as UI icons.
+- Run the AI-slop test: if theme + palette are guessable from the category alone, rework; if the aesthetic family is guessable from category-plus-anti-reference, rework again.
+
+## 5. Layout (high)
+- Vary spacing for rhythm. Cards are the lazy answer; **nested cards are always wrong**.
+- Flexbox for 1D, Grid for 2D; breakpoint-free grids: `repeat(auto-fit, minmax(280px, 1fr))`.
+- Semantic z-index scale (dropdown → sticky → modal → toast → tooltip), never 999/9999.
+- Mobile-first; no horizontal scroll; never disable zoom; test heading copy for overflow at every breakpoint.
+- Cards top out at 12–16px radius; don't pair a 1px border with a ≥16px-blur shadow (ghost-card).
+
+## 6. Typography & color (medium)
+- Cap font families at 3 (display + body + optional mono); pair on a contrast axis. Avoid overused faces (Inter, Roboto, Fraunces, Space Grotesk, …).
+- Hierarchy via scale + weight (≥1.25 ratio); body line length 65–75ch; no all-caps body.
+- Hero/display `clamp()` max ≤ 6rem; display letter-spacing ≥ -0.04em; `text-wrap: balance` on h1–h3.
+- Use OKLCH; pick a color strategy (restrained → committed → full → drenched) before colors; semantic tokens, not raw hex. Avoid the cream/sand body-bg default.
+
+## 7. Motion (medium)
+- Intentional, part of the build. Ease out with exponential curves — no bounce/elastic.
+- `prefers-reduced-motion` is mandatory (crossfade/instant alternative). No uniform section-fade reflex. Never animate `<img>` on hover (incl. Tailwind `group-hover:scale/rotate` on a child image).
+- Product: 150–250ms, conveys state only, no page-load choreography. Brand: ambitious first-load motion when it earns its place.
+
+## Copy
+- Every word earns its place; button labels are verb + object; link text has standalone meaning.
+- No em dashes (or `--`); no marketing buzzwords (streamline/empower/supercharge/seamless/…); no aphoristic "statement-then-negation" cadence as default voice.
+
+## Absolute bans (both registers)
+Gradient text · side-stripe borders · glassmorphism-as-default · the hero-metric template · identical card grids · tiny uppercase tracked eyebrow above every section · numbered section markers (01/02/03) as scaffolding · large rounded icon tiles above every heading · text that overflows its container · the trained-in SaaS look (Inter everywhere, purple→blue gradients, cards in cards, gray-on-color). If someone could say "AI made that" without doubt, it failed.
