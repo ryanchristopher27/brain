@@ -1,0 +1,25 @@
+# voice core configuration
+# Local-first defaults. Cloud backends are opt-in (see .env.example).
+
+[hotkey]
+# Push-to-talk: hold this key to capture, release to transcribe.
+# Default is right Option. Any pynput key name works (e.g. "f13", "cmd_r").
+push_to_talk = "alt_r"
+
+[stt]
+backend = "whisper"        # "whisper" (local) | "deepgram" (cloud, B5)
+model   = "base.en"        # base.en is a good latency/quality point on M2 Pro
+
+[tts]
+backend = "say"            # "say" (local macOS) | "piper" (local) | "elevenlabs"|"openai" (cloud)
+voice   = "Samantha"       # macOS `say` voice; ignored by other backends
+
+[bridge]
+# Headless Claude Code bridge.
+default_persona = "scout"  # voice defaults to the read-only persona
+resume_session  = true     # keep one rolling session across turns
+
+[server]
+# Local websocket the web/ visualizer subscribes to.
+host = "127.0.0.1"
+port = 8765

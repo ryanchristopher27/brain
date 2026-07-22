@@ -1,0 +1,17 @@
+# voice core — local-first, pluggable
+# Audio capture / playback
+sounddevice>=0.4.6          # PortAudio bindings (needs: brew install portaudio)
+numpy>=1.26
+# Global push-to-talk hotkey (needs macOS Accessibility permission)
+pynput>=1.7.6
+# Local STT — whisper.cpp bindings (Metal-accelerated on Apple Silicon)
+pywhispercpp>=1.2.0
+# Event stream server for the web visualizer
+websockets>=12.0
+# Config
+tomli>=2.0; python_version < "3.11"
+
+# --- Optional cloud backends (B5), install only if used ---
+# deepgram-sdk>=3.0
+# elevenlabs>=1.0
+# openai>=1.0

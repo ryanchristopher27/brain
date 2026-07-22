@@ -68,3 +68,65 @@ Phase context: /plan → /scaffold → /build (M1–M8) → /review ×3 → /ref
 ## Suggested Next Phase
 **Commit, then use it.** The work is reviewed and clean — the natural close is a commit/PR, then
 real-world validation. (`/ship` is still deferred in brain, so commit manually for now.)
+
+---
+
+# Reflect — Local Agent Fleet + Voice Interface (plan → scaffold)
+Date: 2026-07-21
+Type: Milestone (planning + scaffold; build not yet started)
+Phase context: /plan → /scaffold → /reflect
+
+## Accomplished
+- Planned a 3-pillar initiative (Agent Fleet · Voice · Visualizer) and appended it as a
+  versioned section to `docs/plan.md`, with a persona-bound safety model and a lean MCP set.
+- Scaffolded 30 files across `agents/`, `mcps/`, `voice/`, `web/` — runnable stubs
+  (`python -m voice.daemon` exits 0; MCP JSON valid; `runner.sh` valid).
+- Resolved the three interaction-design questions into decisions: headless-CC voice bridge,
+  local-first pluggable STT/TTS, personas-as-permission-profiles, `/schedule`-primary.
+
+## What Worked
+- **Verified reality before planning** (the recurring lesson, applied): checked `install.sh`
+  sync logic, M2 Pro hardware, and installed CLI tools *before* drafting — so the plan named
+  the real gap (install.sh has no agents concept) instead of assuming.
+- **Reframing beat accepting.** The user's "dashboard" request was redirected from a chat
+  clone to a live voice *visualizer*; "voice safety posture" was redirected to persona-bound
+  profiles. Both were user course-corrections that improved the design — worth pushing on.
+- **One backend, two frontends.** Making the voice core emit events that both audio and web
+  consume avoided a second integration — a structural decision that keeps C thin.
+- **Scaffold stayed honest.** Behavior-bearing files (install.sh, CLAUDE.md, orchestration
+  rule) were deferred to build rather than faked as boilerplate.
+
+## What Didn't Work
+- Nothing broke, but the plan front-loaded a lot before a single line ran. The value only
+  proves out once A1 wires install.sh + a real headless `claude -p` call is verified.
+
+## Decisions Reviewed
+- **Personas = permission profiles** (frontmatter tool allowlists): elegant, but unverified
+  that a voice-summoned subagent actually inherits the allowlist as strictly as assumed —
+  confirm during A1/B4.
+- **Headless `claude -p` bridge:** the whole voice pillar rests on flags not yet verified
+  against `claude` 2.1.167. Stubs say so; B4 must verify before relying on them.
+- **Lean MCP set:** correct call — most starter MCPs duplicate CC natives; playwright is the
+  one real add (ties to the recurring visual-feedback gap).
+
+## Lessons Learned
+- The "verify reality first" habit generalizes past vendoring: verify the *host tooling*
+  (install.sh, CLI flag surface, hardware) before planning infra around it.
+- When a feature request smells like reinventing a solved thing (a chat webpage), name the
+  trap and offer the version that fills the actual unmet need.
+
+## Surprises
+- The `post-edit-install-sync.sh` hook fires on every Write in brain — same as the frontend
+  session. New top-level dirs (`agents/`, `voice/`, `web/`) aren't synced by it yet (A1).
+
+## Memory Updates
+- **Project memory (writing now):** brain is becoming a *fleet host* + gaining runtime
+  modules (`voice/`, `web/`); status = scaffolded, A1 next.
+
+## Next Steps
+1. **A1** — extend `install.sh` (sync `agents/**/*.md` → `~/.claude/agents/`), flesh persona
+   bodies, add `agents/` section to `CLAUDE.md`, re-run install, verify via `/agents`.
+2. Set `GITHUB_PAT` / `NOTION_TOKEN` before the install run picks up the new MCP configs.
+
+## Suggested Next Phase
+**/build A1** — keystone, isolated from the audio stack, unblocks A3/A4 and the voice bridge.

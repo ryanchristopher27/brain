@@ -1,0 +1,36 @@
+---
+description: Spotify Web API domain rules — activates on Spotify SDK usage (spotipy, spotify-web-api-node) or Spotify OAuth/config; the real current state of endpoints, fields, and auth.
+globs: ["**/*spotify*", "**/spotify_*.py", "**/*Spotify*.{js,ts,svelte}"]
+alwaysApply: false
+---
+
+# Spotify Web API Rules
+
+The official docs are optimistic; trust the response you actually get. Verify live when anything looks off.
+
+## Deprecation wall (apps created after 2024-11-27)
+- Gone (403/404): **audio-features, audio-analysis, recommendations, related-artists, featured-playlists, category playlists**. `preview_url` is usually null.
+- **`popularity` is stripped from BOTH track and artist objects** (top-items, `/tracks`, top-artists all return 0). No popularity signal exists on a new app — don't build "mainstream-ness" on it.
+- Design features to **degrade gracefully** — probe the endpoint, fall back when unavailable.
+
+## Undocumented field quirks (verified)
+- `/me/playlists` returns the track ref under **`items`**, not `tracks` (still `{href, total}`). `playlist['tracks']` silently → 0.
+- `current_user_top_tracks` items **omit `popularity`** (album, duration_ms, explicit, etc. are present).
+- Fields aren't guaranteed even when documented — always `.get(key, default)`.
+- Genres are **artist-level only**; derive "user genres" from top artists, weighted by rank.
+- `album.release_date` is reliable — use it for "era" analysis now that audio-features are gone.
+
+## Auth
+- Implicit grant is dead. **SPAs → Authorization Code + PKCE**; **app-level (search/catalog) → Client Credentials**.
+- Redirect URI must be `http://127.0.0.1:<port>`, **not `localhost`** (bind dev servers to `127.0.0.1` on macOS).
+- Adding a scope **requires re-auth** — old tokens 403 until re-login. Detect and prompt "reconnect."
+
+## Best way to get data
+- Search → Client Credentials. User data (profile/top/playlists/library) → user token.
+- Batch: `/tracks?ids=` (50), `/audio-features?ids=` (100, if available), `/me/tracks/contains?ids=` (50).
+- Add-to-playlist with an **empty list 400s** — guard it. `user_playlist_create` can 403 on new apps → `_post("me/playlists", ...)`.
+
+## spotipy
+- Use `SpotifyClientCredentials` for app-level — `SpotifyOAuth.get_access_token()` tries to start a local server and hangs/errors in a backend.
+- Catch `SpotifyException` (`e.http_status` 403/404) and degrade, don't 500.
+- A CORS error in the browser often masks a backend 500 — add a global exception handler that preserves CORS headers.

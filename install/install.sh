@@ -126,6 +126,18 @@ install_claude_code() {
     fi
   done
 
+  # Subagents (agents/personas + agents/background). Flattened into ~/.claude/agents/
+  # by basename — filenames are unique. _template and non-.md files are skipped.
+  if [ -d "$BRAIN_DIR/agents" ]; then
+    local CC_AGENTS="$HOME/.claude/agents"
+    mkdir -p "$CC_AGENTS"
+    for agent_file in "$BRAIN_DIR/agents/personas"/*.md "$BRAIN_DIR/agents/background"/*.md; do
+      [ -f "$agent_file" ] || continue
+      grep -q '^name:' "$agent_file" || continue   # skip READMEs / non-agent docs
+      install_command_file "$agent_file" "$CC_AGENTS" " (agent)"
+    done
+  fi
+
   # Merge settings.json (hooks + MCPs)
   local BRAIN_SETTINGS="$BRAIN_DIR/.claude/settings.json"
   local CC_SETTINGS="$HOME/.claude/settings.json"
@@ -234,6 +246,16 @@ uninstall() {
         [ -f "$target" ] || [ -L "$target" ] && rm -f "$target" && info "  Removed: $filename (domain: $domain_name)"
       done
     fi
+  done
+
+  # Remove subagents
+  for agent_file in "$BRAIN_DIR/agents/personas"/*.md "$BRAIN_DIR/agents/background"/*.md; do
+    [ -f "$agent_file" ] || continue
+    grep -q '^name:' "$agent_file" || continue
+    local filename target
+    filename=$(basename "$agent_file")
+    target="$HOME/.claude/agents/$filename"
+    [ -f "$target" ] || [ -L "$target" ] && rm -f "$target" && info "  Removed: $filename (agent)"
   done
 
   # Remove Cursor rules

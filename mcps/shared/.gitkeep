@@ -1,0 +1,4 @@
+# Intentionally lean.
+# Most "starter" MCPs (filesystem, fetch, git, memory, sequential-thinking) duplicate
+# Claude Code's native tools, so they are deliberately NOT added here. Add a shared MCP
+# only when it provides reach Claude Code lacks natively and needs no auth.

@@ -20,6 +20,7 @@ The following slash commands are available as part of the brain workflow suite:
 | `/review` | Audit | Full-spectrum review: plan adherence, quality, security |
 | `/iterate` | Refinement | Address findings and feedback on existing work |
 | `/reflect` | Retrospective | Capture lessons, update memory, close with next steps |
+| `/fleet` | Orchestration | Fan a task out across personas in parallel, then merge results |
 
 See `workflow/_phases.md` for how phases connect and when to transition.
 
@@ -45,6 +46,16 @@ Project docs live in `docs/`:
 - `docs/reflect.md` — reflection log
 
 All docs are append-only by default — never overwrite prior entries.
+
+## Multi-Agent Orchestration
+
+For large tasks that split into independent parts, dispatch brain's personas in parallel rather than working single-threaded. Personas: **Scout** (read-only research), **Reviewer** (read-only critique), **Builder** (autonomous, scoped writes), **Operator** (background). The explicit verb is `/fleet`.
+
+- **Fan out** when subtasks are independent, research spans many areas, or a build splits across non-overlapping file scopes. **Don't** for sequential/dependent steps, trivial tasks, or multiple writers over the same files.
+- Scout/Reviewer (read-only) parallelize freely; Builder only across non-overlapping scopes, then merge + verify; Operator is background-only.
+- Brief each agent with its slice + a report-back contract. **Merge by synthesizing** — reconcile conflicts, surface disagreements, attribute findings — never just concatenate.
+
+Note: in Cursor there is no Task-tool fan-out; apply this as sequential persona-style passes.
 
 ## Memory
 

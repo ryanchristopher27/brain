@@ -9,6 +9,10 @@ Brain is a modular LLM resource suite — a vault of workflow skills, rules, hoo
 | Location | Purpose |
 |----------|---------|
 | `.claude/commands/` | Operative skill files — the actual slash commands |
+| `agents/` | Curated Claude Code subagents (personas + background); synced to `~/.claude/agents/` |
+| `mcps/` | MCP server configs (`shared/` no-auth, `personal/` env-var'd); merged into tool settings |
+| `voice/` | Runtime module — local voice core driving headless `claude -p` (self-contained deps) |
+| `web/` | Runtime module — live visualizer of the voice agent (subscribes to `voice/`'s event stream) |
 | `.cursor/rules/` | Cursor rule files, auto-loaded when brain/ is open |
 | `workflow/*/spec.md` | Design docs for each workflow phase — not operative |
 | `workflow/_phases.md` | How phases connect and when to transition |
@@ -42,6 +46,18 @@ The operative file is in `.claude/commands/<name>.md`. The corresponding spec is
 1. Create `domains/<name>/rules.md` with domain-specific behavior
 2. Create `.cursor/rules/<name>.mdc` for Cursor pickup
 3. Re-run `install/install.sh`
+
+### Adding an agent (subagent)
+1. `cp agents/_template/agent.md agents/personas/<name>.md` (or `agents/background/<name>.md`)
+2. Fill in the frontmatter — the `tools:` allowlist **is** the safety boundary; keep it minimal
+3. Write the system-prompt body
+4. Re-run `install/install.sh` — it symlinks every agent `*.md` (with a `name:` field) into
+   `~/.claude/agents/`, flattened by basename, so **agent filenames must be globally unique**
+5. Verify with `/agents` in a fresh session
+
+Personas encode posture structurally: Scout (read-only, voice default) · Reviewer (read +
+git-inspect) · Builder (autonomous, scoped) · Operator (background, tightest scope). See
+`agents/README.md`.
 
 ### After any structural change
 Re-run `install/install.sh` to keep global Claude Code and Cursor configs in sync.

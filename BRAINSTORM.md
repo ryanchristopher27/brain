@@ -141,3 +141,32 @@ Each phase needs:
 - [x] Should domain resources auto-detect context (e.g., detect `package.json` → frontend mode) or require a manual domain declaration? — Both. The frontend domain (first to ship) uses `detect.md` auto-detection signals plus a `domains: frontend` manual override in `CLAUDE.md`.
 - [x] File watcher to auto-run `install.sh` on brain changes — Implemented as a PostToolUse hook (`post-edit-install-sync.sh`) that fires on Write|Edit within the brain directory.
 - [x] ~~Should `brain/shared/` resources be publishable as a standalone repo?~~ — Dropped. Normal resources are already shareable as-is.
+
+---
+
+## Agent Fleet + Voice Interface (2026-07-21)
+brain's second major expansion: from a rules/skills vault into a **fleet host** that also
+ships two runtime modules. Full plan + decisions in `docs/plan.md` (versioned section).
+
+- **New resource type — `agents/`:** curated Claude Code subagents synced to
+  `~/.claude/agents/` (mirrors the `commands/` pattern). Seeded with **personas** whose
+  safety posture is *structural, not trust-based* — each persona's frontmatter `tools:`
+  allowlist is the enforcement boundary. Scout (read-only, voice default) · Reviewer
+  (read+comment) · Builder (autonomous, scoped) · Operator (background, tightest scope).
+- **Lean MCP policy:** most starter MCPs (filesystem/fetch/git/memory/sequential) duplicate
+  Claude Code natives — deliberately skipped. `mcps/personal/` = github · notion · playwright
+  (the one real capability add; ties to the recurring visual-feedback gap). Secrets via env
+  vars only.
+- **`voice/` module (runtime, not a "resource"):** local voice core that drives **headless
+  Claude Code** (`claude -p`) so voice inherits every subagent + MCP. Local-first, pluggable
+  STT (whisper.cpp) / TTS (`say`→Piper); cloud backends env-gated. Lives in the brain repo
+  but self-contained (own venv/deps).
+- **`web/` module:** a live *visualizer* of the voice agent (state · persona · transcript ·
+  orb) — explicitly **not** a chat box and **not** a control panel. Subscribes read-only to a
+  local websocket the voice core emits. One backend, two frontends.
+- **Scheduling:** Claude Code `/schedule` primary; launchd→`claude -p` reserved as an escape
+  hatch for jobs that must fire with CC closed. cron dropped.
+- **Pattern this establishes:** adding a *runtime module* to brain (vs a static resource) —
+  keep it self-contained and one `install.sh` away, but don't treat its deps as brain's.
+  Also: "add a resource type" is a checklist — dir + template + install-sync + hook +
+  CLAUDE.md doc (install-sync for `agents/` is milestone A1, still pending).

@@ -1,0 +1,39 @@
+/* Minimal baseline. Orb/waveform polish + per-persona identity → C2 via /design. */
+:root {
+  --bg: #0b0d10;
+  --fg: #e7ecf0;
+  --muted: #7b8794;
+  --idle: #3a4250;
+  --listening: #3b82f6;
+  --thinking: #a855f7;
+  --speaking: #22c55e;
+}
+
+* { box-sizing: border-box; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.5 -apple-system, system-ui, sans-serif;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+.stage { text-align: center; display: grid; gap: 1rem; padding: 2rem; }
+
+.orb {
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  margin: 0 auto;
+  background: var(--idle);
+  transition: background 0.3s ease, box-shadow 0.3s ease;
+}
+.orb[data-state="listening"] { background: var(--listening); box-shadow: 0 0 60px var(--listening); }
+.orb[data-state="thinking"]  { background: var(--thinking);  box-shadow: 0 0 60px var(--thinking); }
+.orb[data-state="speaking"]  { background: var(--speaking);  box-shadow: 0 0 60px var(--speaking); }
+
+.state { font-size: 1.25rem; font-weight: 600; text-transform: lowercase; }
+.persona { color: var(--muted); font-size: 0.9rem; }
+.transcript { color: var(--fg); max-width: 42ch; margin: 0 auto; min-height: 1.5em; }

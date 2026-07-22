@@ -57,6 +57,44 @@ At the start of any session, check for active domains before proceeding:
 
 Domain rules extend universal rules. Where they conflict, domain rules take precedence.
 
+## Multi-Agent Orchestration
+
+When a task is large or splits into independent parts, dispatch brain's personas (subagents in
+`~/.claude/agents/`) in parallel instead of doing everything in one thread. Personas: **Scout**
+(read-only research), **Reviewer** (read-only critique), **Builder** (autonomous, scoped
+writes), **Operator** (background jobs). The explicit verb for this is `/fleet`.
+
+**Fan out when**
+- The task decomposes into independent subtasks with little shared state
+- Research or search spans many areas / files
+- Several candidate approaches are worth exploring at once
+- A build splits cleanly across non-overlapping file scopes
+
+**Don't fan out when**
+- Steps are sequential/dependent (each needs the previous one's output)
+- The task is small enough that dispatch overhead exceeds the work
+- It would put multiple autonomous writers over the *same* files — never do this
+
+**Who parallelizes safely**
+- Scout and Reviewer are read-only — spawn as many as useful, freely
+- Builder writes — parallelize only across non-overlapping scopes, then merge and verify;
+  otherwise sequence
+- Operator is for background/scheduled jobs, not interactive fan-out
+
+**How to dispatch**
+- Spawn concurrently (multiple Task calls in one turn), not one at a time
+- Give each agent a self-contained brief: its slice, the context it needs, and an explicit
+  report-back contract (what to return)
+- Keep read-only and writing agents off the same files at the same time
+
+**How to merge**
+- Synthesize, don't concatenate — reconcile overlapping or conflicting findings
+- Surface disagreements between agents explicitly rather than silently picking one
+- Attribute who found what when it matters; dedupe when it doesn't
+- The orchestrator owns the final answer and any conflict resolution
+
+Default to Scout for read-only fan-out; summon Builder deliberately and scope its writes.
+
 ---
 
 ## What Not to Do
