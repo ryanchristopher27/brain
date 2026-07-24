@@ -61,6 +61,26 @@ def parse_hotkey(name: str):
     raise ValueError(f"unknown push_to_talk key: {name!r}")
 
 
+def respond_to(text: str, bridge, tts, server) -> str:
+    """Given user text, run the bridge and speak the reply — emitting the state/transcript
+    events the visualizer renders. Shared by the mic loop and --demo."""
+    text = (text or "").strip()
+    server.emit({"type": "transcript", "text": text, "final": True, "role": "user"})
+    print(f"[voice] ✓ heard: {text!r}")
+    if not text:
+        server.emit({"type": "state", "value": "idle"})
+        return ""
+    server.emit({"type": "state", "value": "thinking"})
+    reply = _run_bridge(bridge, text)
+    print(f"[voice] ↳ claude: {reply!r}")
+    if reply:
+        server.emit({"type": "transcript", "text": reply, "final": True, "role": "assistant"})
+        server.emit({"type": "state", "value": "speaking"})
+        tts.speak(reply)
+    server.emit({"type": "state", "value": "idle"})
+    return reply
+
+
 def _run_bridge(bridge, text: str) -> str:
     """Drive one bridge turn; return the assistant's reply text."""
     reply = ""
@@ -89,9 +109,21 @@ def _print_ready(cfg, bridge, server):
 def run(cfg: dict) -> int:
     from pynput import keyboard
 
+    import time
+
     stt, tts, bridge, server = build(cfg)
     server.start_in_thread()
-    recorder = Recorder(samplerate=16000)
+
+    # Stream throttled mic loudness to the visualizer while recording (~25/s).
+    _last_level = [0.0]
+
+    def emit_level(lvl: float) -> None:
+        now = time.monotonic()
+        if now - _last_level[0] >= 0.04:
+            _last_level[0] = now
+            server.emit({"type": "level", "value": round(lvl, 3)})
+
+    recorder = Recorder(samplerate=16000, on_level=emit_level)
     ptt = parse_hotkey(cfg["hotkey"]["push_to_talk"])
 
     _print_ready(cfg, bridge, server)
@@ -114,6 +146,7 @@ def run(cfg: dict) -> int:
     def on_release(key):
         if key == ptt and recorder.is_recording:
             audio = recorder.stop()
+            server.emit({"type": "level", "value": 0})
             dur = len(audio) / recorder.samplerate if len(audio) else 0.0
             if len(audio) == 0:
                 server.emit({"type": "state", "value": "idle"})
@@ -125,20 +158,7 @@ def run(cfg: dict) -> int:
             except Exception as e:  # keep the loop alive on a bad turn
                 text = ""
                 print(f"[voice] STT error: {type(e).__name__}: {e}")
-            server.emit({"type": "transcript", "text": text, "final": True, "role": "user"})
-            print(f"[voice] ✓ heard: {text!r}")
-            if not text:
-                server.emit({"type": "state", "value": "idle"})
-                return
-            # B4: send to Claude (headless, default persona) and speak the reply.
-            reply = _run_bridge(bridge, text)
-            print(f"[voice] ↳ claude: {reply!r}")
-            if reply:
-                server.emit({"type": "transcript", "text": reply,
-                             "final": True, "role": "assistant"})
-                server.emit({"type": "state", "value": "speaking"})
-                tts.speak(reply)
-            server.emit({"type": "state", "value": "idle"})
+            respond_to(text, bridge, tts, server)
 
     try:
         with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
@@ -189,6 +209,34 @@ def ask_once(cfg: dict, question: str) -> int:
     return 0
 
 
+def demo(cfg: dict, text: str) -> int:
+    """Drive the visualizer without a mic: start the event server, wait for you to open the
+    web page, then push one prompt through the loop so you can watch the orb react."""
+    import time
+
+    if not text:
+        print('usage: python -m voice.daemon --demo "text to send"')
+        return 2
+    _, tts, bridge, server = build(cfg)
+    server.start_in_thread()
+    server.emit({"type": "persona", "name": bridge.default_persona})
+    server.emit({"type": "state", "value": "idle"})
+    print(f"[voice] visualizer stream up at ws://{server.host}:{server.port}")
+    print("[voice] serve web/ (python3 -m http.server) and open it, then press Enter…")
+    try:
+        input()
+    except EOFError:
+        pass
+    respond_to(text, bridge, tts, server)
+    print("[voice] demo done — Ctrl-C to stop the server.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
     cfg = load_config()
@@ -196,8 +244,10 @@ def main(argv: list[str] | None = None) -> int:
         return check(cfg)
     if "--ask" in argv:
         i = argv.index("--ask")
-        question = argv[i + 1] if i + 1 < len(argv) else ""
-        return ask_once(cfg, question)
+        return ask_once(cfg, argv[i + 1] if i + 1 < len(argv) else "")
+    if "--demo" in argv:
+        i = argv.index("--demo")
+        return demo(cfg, argv[i + 1] if i + 1 < len(argv) else "")
     return run(cfg)
 
 

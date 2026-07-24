@@ -42,6 +42,7 @@ All commands use the venv created above (`./.venv/bin/python`, or activate it fi
 ```sh
 python -m voice.daemon --check          # self-test: event stream live, then exit (no mic/claude)
 python -m voice.daemon --ask "hi there" # text-in / voice-out: skip the mic, talk to Claude, hear reply
+python -m voice.daemon --demo "hi there"# mic-free, but drives the web visualizer (open web/ then Enter)
 python -m voice.daemon                  # full push-to-talk loop — hold the hotkey (needs perms)
 python -m voice.server                  # standalone event stream only (Ctrl-C to stop)
 ```

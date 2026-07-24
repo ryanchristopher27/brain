@@ -1,36 +1,52 @@
 #!/usr/bin/env bash
 # agents/background/runner.sh
-# Skeleton headless runner for a single background (Operator) job.
-# Scaffold stub — wiring a real scheduled task is milestone A4.
+# Run one unattended Operator job and save a report.
 #
-# Usage: runner.sh "<task prompt>" [extra allowed tools]
-#   e.g. runner.sh "Summarize today's queue.md changes" "Read"
+# Safety model: Operator is read-only (Read/Grep/Glob). The RUNNER writes the output — the
+# agent never needs write permission, which is the safe way to run headless/unattended
+# (a `claude -p` agent can't interactively approve its own writes). Never uses
+# --dangerously-skip-permissions.
+#
+# Usage: runner.sh "<task prompt>" [label]
+#   e.g. runner.sh "Read updates/queue.md and summarize the most recent entry." queue-digest
 
 set -euo pipefail
 
+BRAIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TASK="${1:-}"
-EXTRA_TOOLS="${2:-Read,Grep,Glob}"
+LABEL="${2:-operator}"
+TOOLS="${BRAIN_BG_TOOLS:-Read,Grep,Glob}"   # read-only by default
 
 if [ -z "$TASK" ]; then
-  echo "usage: runner.sh \"<task prompt>\" [allowed-tools]" >&2
+  echo "usage: runner.sh \"<task prompt>\" [label]" >&2
   exit 1
 fi
 
-LOG_DIR="${BRAIN_BG_LOG_DIR:-$HOME/.claude/brain-bg-logs}"
-mkdir -p "$LOG_DIR"
+OUT_DIR="${BRAIN_BG_DIR:-$HOME/.claude/brain-bg-logs}"   # outside the repo — no git churn
+mkdir -p "$OUT_DIR"
 STAMP="$(date +%Y%m%d_%H%M%S)"
-LOG="$LOG_DIR/operator_${STAMP}.log"
+LOG="$OUT_DIR/${LABEL}_${STAMP}.log"
+REPORT="$OUT_DIR/${LABEL}_${STAMP}.md"
 
-echo "[runner] $(date) — starting operator job" | tee "$LOG"
-echo "[runner] task: $TASK" | tee -a "$LOG"
-echo "[runner] allowed tools: $EXTRA_TOOLS" | tee -a "$LOG"
+CLAUDE_BIN="$(command -v claude || echo claude)"
 
-# A4: pin the Operator persona and a scoped allowlist. No --dangerously-skip-permissions.
-# The exact flag surface is verified against the installed `claude` CLI in A4.
-#
-#   claude -p "$TASK" \
-#     --agents operator \
-#     --allowedTools "$EXTRA_TOOLS" \
-#     --output-format stream-json 2>&1 | tee -a "$LOG"
+cd "$BRAIN_DIR"   # run in the repo so Operator can read project files with relative paths
 
-echo "[runner] (stub) not yet wired — see milestone A4" | tee -a "$LOG"
+{
+  echo "[runner] $(date) starting '$LABEL'"
+  echo "[runner] task : $TASK"
+  echo "[runner] tools: $TOOLS (read-only; no --dangerously-skip-permissions)"
+  echo "[runner] cwd  : $BRAIN_DIR"
+} | tee "$LOG"
+
+# Operator produces the text; the runner persists it.
+if RESULT="$("$CLAUDE_BIN" -p "$TASK" \
+      --agent operator \
+      --allowed-tools "$TOOLS" \
+      --output-format text 2>>"$LOG")"; then
+  printf '%s\n' "$RESULT" > "$REPORT"
+  echo "[runner] ✓ report → $REPORT" | tee -a "$LOG"
+else
+  echo "[runner] ✗ claude failed (see $LOG)" | tee -a "$LOG"
+  exit 1
+fi

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Example launchd agent: run the Operator queue-digest job daily at 09:00.
+  This is a TEMPLATE (.example) — it is not active until you install it:
+
+    cp agents/background/com.brain.queue-digest.plist.example \
+       ~/Library/LaunchAgents/com.brain.queue-digest.plist
+    launchctl load ~/Library/LaunchAgents/com.brain.queue-digest.plist   # enable
+    launchctl start com.brain.queue-digest                                # run once now
+    launchctl unload ~/Library/LaunchAgents/com.brain.queue-digest.plist  # disable
+
+  PATH is set explicitly because launchd runs with a minimal environment and would not
+  otherwise find the `claude` binary in ~/.local/bin.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.brain.queue-digest</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/rchristopher/Desktop/Code/brain/agents/background/runner.sh</string>
+    <string>Read updates/queue.md and summarize the most recent session entry in 3 bullets, then list any brain-improvement action items. Be concise.</string>
+    <string>queue-digest</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/rchristopher/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>9</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/rchristopher/.claude/brain-bg-logs/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/rchristopher/.claude/brain-bg-logs/launchd.err.log</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

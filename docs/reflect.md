@@ -130,3 +130,86 @@ Phase context: /plan → /scaffold → /reflect
 
 ## Suggested Next Phase
 **/build A1** — keystone, isolated from the audio stack, unblocks A3/A4 and the voice bridge.
+
+---
+
+# Reflect — Agent Fleet + Voice: A1, A3, B1–B4, C1
+Date: 2026-07-23
+Type: Milestone (multi — the build-out of the fleet + full voice loop)
+Phase context: /build ×7 across two prior /reflect checkpoints
+
+## Accomplished
+- **Fleet (A):** A1 (new `agents/` resource type + install.sh sync w/ `name:`-frontmatter
+  guard + 4 personas + CLAUDE.md doc), A3 (orchestration rule in universal/rules.md + Cursor
+  mirror + `/fleet` command/spec).
+- **Voice (B):** B1 (hotkey + mic capture + threaded websocket event stream), B2 (whisper.cpp
+  STT, Metal-accelerated), B3 (`say` TTS), B4 (headless `claude -p` bridge — the convergence).
+- **Visualizer (C):** C1 (web page renders live state/persona/role-tagged transcript).
+- Net: a working local voice assistant wired to the agent fleet, plus a live visual companion.
+
+## What Worked
+- **Hardware-free verification as a discipline.** Nearly every milestone needed something I
+  can't drive (mic, Accessibility, a browser, a real voice) — and each got a real end-to-end
+  check anyway: `--check` (event stream), `say`+`afconvert` synthetic speech to verify STT,
+  `--ask`/`--demo` text-driven paths, a stubbed ws client for the C1 event contract, and a
+  dry-run of the agents-sync into a temp dir. This kept every milestone genuinely verified,
+  not just "compiles."
+- **Verify-reality-first, again.** The `claude` CLI probe confirmed the real flag surface
+  (`--agent` singular, stream-json shape, `session_id`, and that `--agent scout` yields a
+  read-only session) instead of trusting the stubs' assumptions. It validated the entire
+  persona-as-permission-profile model empirically.
+- **Dry-run before touching global state.** Testing the agents-sync into a temp dir caught the
+  `README.md`-installed-as-an-agent bug before it hit `~/.claude/agents/`.
+- **Shared `respond_to()` refactor.** Extracting the response path let the mic loop and the
+  new `--demo` mode share one code path — no duplication, and `--demo` became a real test tool.
+
+## What Didn't Work
+- **venv isolation stumbles (×2).** `numpy` then `tomli` were present in the mambaforge base
+  but missing in the fresh venv, so two runs failed before I installed the full set. Relying
+  on base-env leakage bit me.
+- **The auto-sync hook is a double-edged sword.** `post-edit-install-sync.sh` re-runs the
+  *full* `install.sh` on every brain edit — it merged the personal MCPs into global config
+  before tokens were set, re-created the README-agent artifact before the guard existed, and
+  spams `.bak` files. Convenient, but it fires more broadly than the change warrants.
+- Minor: a transient port-rebind flake on back-to-back `--check` runs; a false-failure from my
+  own `__version__` probe line.
+
+## Decisions Reviewed
+- **Personas = permission profiles:** now *empirically validated* — `--agent scout`'s session
+  had only Read/Grep/Glob/Web tools. The safety model holds headless.
+- **Headless `claude -p` bridge (the big architectural bet):** paid off — `--resume` gives
+  real session continuity, and voice inherits every persona + MCP with no second integration.
+- **Local-first STT (whisper.cpp/Metal):** correct for the M2 Pro — fast, private, accurate.
+- **`--verbose` required for stream-json under `--print`:** a concrete detail found by probing,
+  not documented in my plan.
+
+## Lessons Learned
+- **Treat hardware-free verification paths as first-class deliverables.** When a feature needs
+  hardware/permissions/UI the assistant can't drive, build text-driven / stubbed / synthetic-
+  input modes *as part of the milestone*. It's the difference between "shipped, untested" and
+  "verified" — and it doubles as user-facing test tooling.
+- **Verify dependencies inside the actual runtime env**, not the base interpreter — venvs don't
+  inherit base packages.
+- The "verify reality before building" habit held for a 5th time; this variant was probing a
+  CLI's real flag surface + output shape before wiring a subprocess around it.
+
+## Surprises
+- The personas already appeared in `claude`'s `--agent` list mid-session — the auto-sync hook
+  had propagated them without an explicit install.
+- macOS `say` with the *default* voice emits ~5 ms of silence; an explicit voice (Samantha)
+  works. System-specific, and it would have looked like an STT failure if not isolated.
+- `claude -p ... stream-json` init event is a rich introspection surface (tools, agents,
+  mcp_servers, session_id, permissionMode) — useful beyond just parsing the reply.
+
+## Memory Updates
+- Project memory kept current through C1 (verified CLI flag surface persisted as fact).
+- Candidate brain-level memory: "build hardware-free verification paths" as a feedback rule.
+
+## Next Steps
+1. **A4** — Operator scheduled job (closes Pillar A). Decide the write-permission strategy for
+   an autonomous background agent that `-p` can't interactively approve.
+2. Real-mic test (user-only): grant mic + Accessibility, run the full push-to-talk loop.
+3. Optional: C2 (orb animation / per-persona identity via /design), B5 (cloud backends).
+
+## Suggested Next Phase
+**/build A4** — finish the fleet, then a real-mic pass to validate the one untested surface.
