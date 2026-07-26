@@ -3,19 +3,51 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>voice · visualizer</title>
+  <title>brain · agent dashboard</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <!-- Live embodiment of the voice agent. Not a chat, not a control panel:
-       it reflects the session the voice core broadcasts. -->
-  <main class="stage">
-    <div id="orb" class="orb" data-state="idle" aria-hidden="true"></div>
-    <p id="state" class="state">connecting…</p>
-    <p id="persona" class="persona"></p>
-    <div id="log" class="log" aria-live="polite"></div>
+  <header class="topbar">
+    <h1>brain <span>· agent dashboard</span></h1>
+    <div id="conn" class="conn" data-ok="false">offline</div>
+  </header>
+
+  <main class="grid">
+    <!-- Active session: the C2 orb, absorbed as one tile -->
+    <section class="panel session">
+      <h2>active session</h2>
+      <div class="session-body">
+        <div id="orb" class="orb" data-state="idle" aria-hidden="true"></div>
+        <div class="session-meta">
+          <p id="state" class="state">idle</p>
+          <p id="persona" class="persona"></p>
+        </div>
+      </div>
+      <div id="log" class="log" aria-live="polite"></div>
+    </section>
+
+    <section class="panel">
+      <h2>agents <span id="agents-count" class="count"></span></h2>
+      <div id="agents" class="cards"><p class="empty">loading…</p></div>
+    </section>
+
+    <section class="panel">
+      <h2>background jobs</h2>
+      <div id="jobs" class="rows"><p class="empty">loading…</p></div>
+    </section>
+
+    <section class="panel half">
+      <h2>schedule</h2>
+      <div id="schedule" class="rows"><p class="empty">loading…</p></div>
+    </section>
+
+    <section class="panel half">
+      <h2>fleet health</h2>
+      <div id="health" class="rows"><p class="empty">loading…</p></div>
+    </section>
   </main>
-  <div id="conn" class="conn" data-ok="false">offline</div>
+
   <script src="app.js"></script>
+  <script src="panels.js"></script>
 </body>
 </html>

@@ -7,7 +7,7 @@
 //   {type:"transcript", text:"…", role:"user|assistant", final:true}
 //   {type:"level",   value:0..1}   // live mic loudness while listening
 
-const WS_URL = "ws://127.0.0.1:8765";
+const VOICE_FALLBACK = "ws://127.0.0.1:8765"; // standalone voice, no dashboard
 const MAX_LINES = 12;
 
 const el = {
@@ -72,8 +72,21 @@ function setConn(ok, label) {
   el.conn.textContent = label;
 }
 
-function connect() {
-  const ws = new WebSocket(WS_URL);
+// If served by the dashboard, use its authenticated hub; else fall back to voice directly.
+async function resolveWsUrl() {
+  try {
+    const r = await fetch("/api/config", { cache: "no-store" });
+    if (r.ok) {
+      const c = await r.json();
+      return `ws://${location.host}/ws?token=${encodeURIComponent(c.token)}`;
+    }
+  } catch (_) { /* not served by the dashboard */ }
+  return VOICE_FALLBACK;
+}
+
+async function connect() {
+  const url = await resolveWsUrl();
+  const ws = new WebSocket(url);
   ws.onopen = () => setConn(true, "online");
   ws.onmessage = (m) => {
     try { render(JSON.parse(m.data)); } catch { /* ignore malformed */ }

@@ -375,3 +375,265 @@ _Resolved 2026-07-19: MCP shortlist (lean: github/notion/playwright), safety mod
 - Top-level structure clear: ✅ `agents/`, populated `mcps/`, `voice/`, `web/`, extended `install.sh`.
 - Entry points identified: ✅ `voice/daemon.py` + `voice/server.py` (voice + event stream), `web/index.html` (visualizer), `agents/personas/*` + `agents/background/` (fleet), `install.sh` (wiring).
 - **No hard blockers** — all three remaining open questions have safe defaults. Ready for /scaffold once you confirm them.
+
+---
+
+# Plan — Agent Dashboard (Pillar C v2)
+Date: 2026-07-23
+Status: Draft
+Brainstorm: inline (mini-grounding folded in)
+
+## Overview
+Evolve the `web/` voice visualizer into a **local agent dashboard** — a high-level view of the
+agents you control and what they're working on, with the ability to act on them. Explicitly
+**not a chat interface**: it shows status and activity, not conversation transcripts. The C2
+orb is preserved as the **"active session" panel** inside a larger layout.
+
+This reopens — and deliberately supersedes — the original Pillar C decision that the web
+surface would be "a voice visualizer, not a control panel." The user has chosen **full
+control**, so the dashboard becomes a real (local-only) control surface.
+
+## Goals & Success Criteria
+- **G1 — See the fleet.** One page shows: the live voice session (orb + active persona +
+  current task, high-level), the persona roster, background-job history, and scheduled jobs.
+- **G2 — Know what's running.** "What they're working on" is truthful — the current voice
+  turn, any dashboard-spawned run, and background jobs; each with status.
+- **G3 — Act on agents.** Trigger a background job, spawn a persona on a task, stop a running
+  run, enable/disable a scheduled job — from the dashboard, safely.
+- **G4 — Stay safe.** The control server binds `127.0.0.1` only; write-capable spawns are
+  scoped and confirmed; never `--dangerously-skip-permissions`.
+- **Success =** open the dashboard, watch a live voice turn in the active-session panel, see the
+  last background digest and its report, and kick off a new read-only run from a button.
+
+## Scope
+### In Scope
+- A local **control server** (backend) that serves the dashboard, hosts the event hub, exposes
+  read APIs (roster, jobs, runs) and — phase 2 — action APIs (spawn/stop/schedule).
+- Restructured `web/` dashboard: active-session panel (orb), persona roster, jobs, schedule.
+- A **run registry** (phase 3) that voice, background jobs, and dashboard-spawned runs write to,
+  so activity is unified and live.
+- Reuse of the runner safety model for any spawned run.
+
+### Out of Scope (v1)
+- **A chat interface** — no conversation transcript UI; high-level status only.
+- Observing agents spawned *inside* an interactive Claude Code session (Task tool) — the
+  dashboard can't see those unless they write to the registry. Be honest about this.
+- Remote/multi-user access, auth beyond local-only bind, hosted deployment.
+- Standing "agent daemons" — agents run per-invocation; there is nothing to keep alive.
+
+## Tech Stack & Architecture
+
+### Recommended decisions
+| Question | Recommendation | Why |
+|----------|----------------|-----|
+| Backend | **FastAPI + uvicorn** (in the voice venv) | Clean HTTP action API + websocket + static serving + typed JSON in one place; the stdlib ws-only hub would get unwieldy with a REST/control surface. |
+| Frontend | **Keep vanilla JS** (extend current `web/`) | The orb + a handful of panels don't need a framework/build step; the current page is dependency-free and working. React/Vite ruled out (build overhead for a local single-user tool). |
+| Where the backend lives | **New top-level `dashboard/`** (Python), consuming the voice event stream | The dashboard spans the whole fleet (agents + voice + jobs), not just voice; keep voice able to run standalone and *publish* to the dashboard when present. |
+| "Start an agent" | **Spawn a headless `claude -p` run** (or trigger a job), tracked by the process manager | Personas aren't standing processes; a run is the unit. Reuses the runner pattern. |
+| Data model | Agents (personas) + **Runs** (id, agent, task, source, status, times, report, pid) | A "run" unifies voice turns, background jobs, and dashboard-spawned work. |
+
+### Architecture shift
+```
+        ┌──────────────── dashboard/ (FastAPI) ────────────────┐
+        │  event hub (ws)  ·  read API  ·  action API           │
+        │  process manager (spawn/stop headless runs)           │
+        │  run registry (append-only JSONL, tailed)             │
+        └───▲───────────────▲───────────────▲──────────────────┘
+   voice daemon        background         web/ dashboard
+  (publishes its     runner.sh           (renders panels,
+   session events)   (writes runs)        sends actions)
+```
+The control server becomes the central hub. The voice daemon publishes its session events to it
+(instead of hosting its own ws); `web/` renders panels and issues actions. Reality check baked
+in: the dashboard reports what it can actually see (voice + background + what it spawns) — it is
+not omniscient about in-session Task spawns.
+
+### Dashboard layout (high-level, product register)
+- **Active session** (the orb, absorbed): active persona, state, current task one-liner.
+- **Personas**: roster from `agents/` — name, posture, tools, last-used.
+- **Runs / jobs**: recent runs + background jobs from `~/.claude/brain-bg-logs/` + registry —
+  label, agent, status, time, link to report.
+- **Schedule**: launchd jobs + next run; enable/disable.
+
+## Milestones
+Three phases. Phase 1 ships a real read-only dashboard; 2 adds control; 3 enriches the data.
+
+| # | Milestone | Description | Dependencies |
+|---|-----------|-------------|--------------|
+| D1 | Control server foundation | `dashboard/` FastAPI app: serve `web/`, host the ws hub, read APIs (roster, jobs). Voice daemon publishes its events to it (refactor the ws host; keep a standalone fallback) | voice B4 |
+| D2 | Dashboard shell + active-session panel | Restructure `web/` into a panel layout; the C2 orb becomes the live "active session" tile (persona · state · current task — not the transcript) | D1 |
+| D3 | Fleet & jobs panels (read) | Persona roster (agents/), background-job history + latest report (brain-bg-logs), scheduled-job status (launchd). Read-only | D1 |
+| D4 | Action API + process manager | Spawn headless persona/job runs, track status, stop them; safety posture (127.0.0.1-only, scoped tools, confirm, no skip-perms) | D1 |
+| D5 | Dashboard controls | Buttons/wiring for run-job / spawn-on-task / stop / enable-schedule, each with a confirm step | D4 |
+| D6 | Run registry (richer live tracking) | Append-only run log every surface writes to (voice turns, runner.sh, dashboard spawns, optionally /fleet); dashboard reads unified live activity | D1, D4 |
+
+## Risks & Mitigations
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|-----------|
+| A web page that executes agents is a code-exec surface | High | High | Bind `127.0.0.1` only; treat as local-only; write-capable spawns require scoped `--allowed-tools` + a UI confirm; never `--dangerously-skip-permissions`; document it as a control surface |
+| Headless write-permission problem resurfaces (spawning Builder/Operator with writes) | Med | High | Default spawns to read-only personas; for writes, reuse the runner pattern (agent read-only, runner writes) or a confined `--add-dir` + explicit allowlist + confirm |
+| Refactoring the voice ws host into the control server destabilizes the working voice loop | Med | Med | Keep the voice daemon able to run standalone (own ws) and *publish* to the dashboard only when present; feature-flag the change |
+| Scope creep — full control + registry is large | High | Med | Strict phasing; Phase 1 (D1–D3) ships a useful read-only dashboard before any control |
+| Dashboard implies omniscience it doesn't have (in-session Task spawns invisible) | Med | Low | Show only truthfully-observable activity; label the registry's coverage; don't fake a live fleet |
+
+## Dependencies
+- **New:** `fastapi`, `uvicorn` (voice venv). Frontend stays dependency-free.
+- **Present/reused:** voice event emission (B1–B4), `agents/` roster, `runner.sh` + `~/.claude/brain-bg-logs/`, launchd template (A4), the C2 orb.
+- **Design:** build the dashboard against the frontend domain (Product register) via `/design`.
+
+## Open Questions
+1. **Backend home** — new top-level `dashboard/` (recommended) vs. extending `voice/`? Confirm.
+2. **Auth** — local-only `127.0.0.1` bind with no token for v1 (recommended), or a shared-secret
+   token even locally?
+3. **"Spawn on task" default persona** — Scout (read-only) by default, with write personas
+   behind an explicit scoped confirm? (recommended)
+
+## Decisions Log
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Supersede "not a control panel" | Web surface becomes a **full-control agent dashboard** | User chose full control; explicit reversal of the original Pillar C scope | 2026-07-23 |
+| Orb's fate | **Absorbed** as the active-session panel | Preserves the C2 work; the live session is one tile in the dashboard | 2026-07-23 |
+| Data source | **Both, phased** — observe now, run registry later | Ship a real read-only dashboard fast; enrich to live unified tracking after | 2026-07-23 |
+| Backend | **FastAPI + uvicorn**, new `dashboard/` module | HTTP action API + ws + static in one place; spans more than voice | 2026-07-23 |
+| Frontend | **Vanilla JS**, extend `web/` | No build step needed at this scale; current page works | 2026-07-23 |
+| Not a chat | High-level status only; no transcript UI | User: "don't make it the chat interface, high level things" | 2026-07-23 |
+
+## Handoff Readiness (for /scaffold)
+- Tech stack decided: ✅ FastAPI backend (`dashboard/`) + vanilla-JS `web/`, reusing voice events + brain-bg-logs + agents/ roster.
+- Structure clear: ✅ new `dashboard/` backend (hub + APIs + process manager + registry); `web/` becomes panels; voice publishes to the hub.
+- Entry points: ✅ `dashboard/` app (serves web/ + ws + API); `web/` panels; voice daemon publish path.
+- **Open before scaffold:** Q1–Q3 (all have safe defaults). Phase 1 (D1–D3) is the first shippable slice.
+
+---
+
+## Agent Dashboard — Enhancements & Revisions (v2)
+Date: 2026-07-24
+Source: /brainstorm (folded into this plan)
+
+### Reframe: the dashboard has TWO axes
+1. **Agents & Runs** — who's working, how, and at what cost.
+2. **Work Pipeline** — ideas progressing brainstorm → plan → scaffold → build → review →
+   reflect.
+
+They unify: **agents are what move pipeline cards forward.** A card in "Build" can show the
+Builder actively working it; finishing a run advances the card. The dashboard becomes mission
+control for both the fleet *and* the flow of work.
+
+Adopted (all): live activity+cost · approvals inbox · MCP/daemon health · task queue/dispatcher ·
+**work-pipeline board** · notifications · quick-action templates · /fleet visualization.
+Registry = **SQLite**. Local-API **CSRF/token hardening = mandatory**.
+
+### New / revised panels
+- **Work Pipeline (Kanban)** — columns = workflow phases; cards = projects/features; a card's
+  column is its detected phase (reuse `/status`'s doc-presence detection); cards link to their
+  active run(s). This is "the progression of ideas."
+- **Activity & cost** — per-run tool-call feed (*Scout is reading X…*) + a spend panel, both from
+  the `stream-json` `tool_use` events and `total_cost_usd`/tokens we already parse.
+- **Fleet health** — MCP connection status (github/notion/playwright — surfaces the tokens-not-set
+  issue from A2), voice-daemon up?, model + permission-mode.
+
+### Approvals inbox — unlocks safe autonomous writes (pays off the B4 debt)
+Run write-capable personas headless with `claude -p --permission-prompt-tool <mcp-tool>`; that tool
+forwards each tool-approval request to the dashboard, which shows *"Builder wants to Write X —
+approve?"* and returns allow/deny. This resolves the "headless `-p` can't prompt for writes" block
+we've deferred since B4, and makes Builder/Operator usable under human-in-the-loop control.
+**Verify `--permission-prompt-tool` against claude 2.1.167 (a B4-style probe) before building D8.**
+
+### Revised milestones (phased) — extends D1–D6
+**Phase 1 · Observe:** D1 control server · D2 shell + orb panel · D3 fleet/jobs + **health** +
+**activity** panels · **D7 work-pipeline board (read-only)**
+**Phase 2 · Control:** D4 action API + **CSRF/token + audit log (mandatory)** · D5 controls +
+**quick-action templates** + **notifications** · **D8 approvals inbox**
+**Phase 3 · Enrich:** D6 **SQLite** run registry + **cost/stats** + **/fleet run visualization** ·
+**D9 task queue / dispatcher**
+
+| # | Milestone | Description | Dependencies |
+|---|-----------|-------------|--------------|
+| D7 | Work-pipeline board | Kanban of phases; cards = projects/features; phase detected via `/status` doc-logic; cards link to runs | D1 |
+| D8 | Approvals inbox | `--permission-prompt-tool` → dashboard approve/deny; unblocks autonomous writes (probe the flag first) | D4 |
+| D9 | Task queue / dispatcher | Enqueue tasks, assign to personas, watch them drain | D4, D6 |
+
+### Added risks
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|-----------|
+| `--permission-prompt-tool` behaves differently than assumed on 2.1.167 | Med | High | Probe it (B4-style) before D8; fall back to the runner "agent read-only, runner writes" pattern if unsupported |
+| Pipeline phase-detection is ambiguous (e.g. plan.md + reflect.md both exist) | Med | Med | Reuse `/status` order + a tiebreak; consider a lightweight per-project `.brain-state` marker |
+| Multi-project scope for the pipeline | Med | Low | v1 watches the current repo; add configured project roots later |
+| Everything-selected = large scope | High | Med | Strict phasing; Phase 1 (D1–D3, D7) still ships a real dashboard before any control |
+
+### Decisions Log (additions)
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Registry storage | **SQLite** | Enables cost/stats/history aggregation the activity panel needs | 2026-07-24 |
+| Enhancements adopted | **All** + extras (notifications, quick-actions, /fleet-viz) | User-selected | 2026-07-24 |
+| Second axis | **Work-pipeline board** (phase progression) | User addition; reframes dashboard as agents + work-flow mission control | 2026-07-24 |
+| Approvals mechanism | `claude -p --permission-prompt-tool` → dashboard | Unblocks safe autonomous writes; verify vs 2.1.167 first | 2026-07-24 |
+| Local API security | **Token + Origin/Host check + action audit log** (mandatory) | localhost is reachable by any web page (CSRF); "no auth, local-only" is unsafe | 2026-07-24 |
+
+### Open Questions (additions)
+4. **Pipeline scope** — current repo only for v1 (recommended) vs configured project roots? And the
+   phase-detection tiebreak rule.
+5. **Approvals probe** — confirm `--permission-prompt-tool` behavior on 2.1.167 before committing D8.
+
+---
+
+## Agent Dashboard — Fleet Recon Findings & Revisions
+Date: 2026-07-24
+Source: /fleet (Scout ×1, Reviewer ×1) + direct CLI probes. Pre-build de-risking.
+
+### ⚠️ D8 reality: `--permission-prompt-tool` does NOT exist on claude 2.1.167 (probed)
+`claude --help` has **0 matches** for `permission-prompt-tool`. Available controls are
+`--permission-mode {acceptEdits,auto,bypassPermissions,manual,dontAsk,plan}`,
+`--allowed-tools`/`--disallowed-tools`. So the **live per-action approvals inbox cannot be built
+as specified.** Pivot:
+- **D8 → run-level approval.** The dashboard shows a proposed *run* (persona · task · allowed
+  tools · target dir) and you approve/deny **the whole run** before it starts — not per tool
+  call. Execution then uses `--permission-mode acceptEdits` + tight `--allowed-tools` + a
+  confined `--add-dir`. Read-only work keeps the runner pattern (agent read-only, runner writes).
+  Never `--dangerously-skip-permissions`.
+- Re-verify if the CLI gains `--permission-prompt-tool` later (it exists in the Agent SDK; not
+  this CLI). D8 downgrades from "keystone" to "nice-to-have"; it no longer blocks control.
+
+### D1 integration: dashboard SUBSCRIBES to voice (do not invert)
+Keep the working voice ws exactly as-is (voice owns `127.0.0.1:8765`, `daemon.py` unchanged). The
+dashboard (FastAPI, `127.0.0.1:8766`) opens a **ws client** to voice, receives events, and
+re-broadcasts on its own hub. `web/app.js:10` changes its one URL from `:8765` → `:8766`. All
+integration complexity lives in the dashboard; the voice loop is untouched and still runs
+standalone. (Supersedes the plan's "voice publishes to the control server" wording.)
+
+### Security moves to D1 (not D4) — mandatory at founding
+Static **bearer token + `Origin`/`Host` check** on every route and the ws upgrade, from the first
+commit, plus an action audit log. The FastAPI app is reachable by any local browser tab the moment
+D1 ships; read-only APIs already disclose paths/logs. ~5 lines of middleware.
+
+### Work-pipeline phase detection — LOCKED (D7)
+Detection (reused from `/status`, `.claude/commands/status.md:10-19`):
+brainstorm=`docs/brainstorm.md` · plan=`docs/plan.md` · scaffold=structure/manifest present ·
+build=meaningful source beyond boilerplate · review=`docs/review.md` ·
+iterate=`review.md` has a "Resolved This Session" section · reflect=`docs/reflect.md`.
+**Tiebreak:** most-advanced phase wins for card placement; show lower completed phases as badges.
+Order: Reflect>Iterate>Review>Build>Scaffold>Plan>Brainstorm. A per-project `.brain-phase` file
+overrides. Iterate = sub-state of Review. **Project id:** v1 = current repo; v2 = explicit registry
+`~/.claude/brain/projects.json` (`{name, root_path}`), no filesystem crawl.
+
+### Confirmed data shapes (probed)
+- **Roster (D3):** agent frontmatter = `name, description, tools, model`; body has a `## Posture`
+  paragraph. Render tools as the capability/safety chips.
+- **Activity feed (D3/D6):** `assistant.message.content[].tool_use` → `.name` + `.input`
+  (e.g. `Read {file_path,limit}`). Truthful "what it's doing right now."
+- **Cost (D6):** `result.total_cost_usd` + `usage.{input_tokens,output_tokens}`. Real runs cost
+  ~$0.02–0.05 each — the spend panel earns its place.
+- **Jobs (D3):** `~/.claude/brain-bg-logs/<label>_<YYYYMMDD_HHMMSS>.{log,md}` (log + report).
+- **Schedule (D3):** `launchctl list | grep -i brain` for loaded state.
+
+### D6 registry writers — enumerated (SQLite)
+Name each writer as its own sub-task: voice daemon (Python, direct), dashboard-spawned runs
+(Python, direct), `runner.sh` (via a `brain-registry-append` Python helper — no inline SQLite in
+bash). Missing one ⇒ silent partial data.
+
+### Revised Phase 1 build order
+**D1** (FastAPI server + bearer-token/Origin security + voice-subscribe proxy) →
+**D3** (read panels: roster · jobs · health · activity) →
+**D2** (orb absorbed as active-session panel) →
+**D7** (pipeline board). Visual checkpoint (human) at D2 + D7. Backend (D1/D3) is the autonomous-
+friendly slice; D2/D7 need eyes.
