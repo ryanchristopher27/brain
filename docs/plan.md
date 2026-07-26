@@ -1157,3 +1157,9 @@ A project with no `.brain/tasks/` simply contributes none.
 | Decision | Choice | Reasoning | Date |
 |----------|--------|-----------|------|
 | Task IDs | **Random short id** (`secrets.token_hex(3)`, ref `#9f3a2b`) | Collision-free across offline devices (no central assigner); slug keeps filenames readable | 2026-07-26 |
+
+### Tracker decisions confirmed (2026-07-26, post-v1 reflect)
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Auto-review scope | **Write runs only** (read-only → straight to review) | Reviewing a read-only research run has nothing to diff; cheaper | 2026-07-26 |
+| Dev server | **`--reload` mode added** to `dashboard.server` | Kills the recurring manual kill+nohup restart friction | 2026-07-26 |

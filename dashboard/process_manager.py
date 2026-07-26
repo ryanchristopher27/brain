@@ -19,7 +19,7 @@ import signal
 import time
 from pathlib import Path
 
-from . import data, registry
+from . import data, registry, tracker
 
 ALLOWED_BASE = (Path.home() / "Desktop" / "Code").resolve()
 MAX_CONCURRENT = 4
@@ -62,6 +62,7 @@ class ProcessManager:
         self._pending: dict[str, dict] = {}
         self._queue: list[dict] = []
         self._dispatch_lock = asyncio.Lock()
+        self._task_of: dict[str, dict] = {}  # run_id → {root, id} for tracker-linked runs
 
     def _validate(self, persona: str, task: str, add_dir: str | None):
         agents = _known()
@@ -78,14 +79,17 @@ class ProcessManager:
         return agents[persona], task, resolved
 
     # D4 — direct spawn, read-only personas only.
-    async def spawn(self, persona: str, task: str, add_dir: str | None = None) -> dict:
+    async def spawn(self, persona: str, task: str, add_dir: str | None = None,
+                    task_ref: dict | None = None) -> dict:
         agent, task, resolved = self._validate(persona, task, add_dir)
         if not agent["read_only"]:
             raise SpawnError("write-capable personas require approval (propose/approve)", 403)
-        return await self._launch(registry.new_id(), persona, task, resolved, write_mode=False)
+        return await self._launch(registry.new_id(), persona, task, resolved,
+                                  write_mode=False, task_ref=task_ref)
 
     # D8 — propose a run; write personas land here and wait for approval.
-    async def propose(self, persona: str, task: str, add_dir: str | None = None) -> dict:
+    async def propose(self, persona: str, task: str, add_dir: str | None = None,
+                      task_ref: dict | None = None) -> dict:
         agent, task, resolved = self._validate(persona, task, add_dir)
         writer = not agent["read_only"]
         if writer and resolved is None:
@@ -95,7 +99,7 @@ class ProcessManager:
         run_id = registry.new_id()
         prop = {"persona": persona, "task": task,
                 "add_dir": str(resolved) if resolved else None, "writer": writer,
-                "ts": time.time()}
+                "task_ref": task_ref, "ts": time.time()}
         self._pending[run_id] = prop
         _audit({"action": "propose", "run_id": run_id, "persona": persona,
                 "task": task[:120], "add_dir": prop["add_dir"], "writer": writer})
@@ -108,7 +112,8 @@ class ProcessManager:
             raise SpawnError("no such pending run", 404)
         _audit({"action": "approve", "run_id": run_id})
         resolved = Path(p["add_dir"]).resolve() if p["add_dir"] else None
-        return await self._launch(run_id, p["persona"], p["task"], resolved, write_mode=p["writer"])
+        return await self._launch(run_id, p["persona"], p["task"], resolved,
+                                  write_mode=p["writer"], task_ref=p.get("task_ref"))
 
     async def deny(self, run_id: str) -> bool:
         if self._pending.pop(run_id, None) is None:
@@ -162,7 +167,8 @@ class ProcessManager:
         return list(self._queue)
 
     async def _launch(self, run_id: str, persona: str, task: str,
-                      resolved_dir: Path | None, write_mode: bool) -> dict:
+                      resolved_dir: Path | None, write_mode: bool,
+                      task_ref: dict | None = None) -> dict:
         if len(self._active) >= MAX_CONCURRENT:
             raise SpawnError("at capacity — too many active runs", 429)
         argv = [self.claude, "-p", task, "--agent", persona,
@@ -180,6 +186,8 @@ class ProcessManager:
             start_new_session=True, **kwargs,
         )
         self._active[run_id] = proc
+        if task_ref:
+            self._task_of[run_id] = task_ref
         self._reg(lambda c: registry.insert_run(c, run_id, persona, task, "dashboard", pid=proc.pid))
         _audit({"action": "launch", "run_id": run_id, "persona": persona,
                 "pid": proc.pid, "write_mode": write_mode})
@@ -190,6 +198,7 @@ class ProcessManager:
 
     async def _drain(self, run_id: str, proc) -> None:
         cost = inp = out = None
+        final_text = None
         try:
             async for raw in proc.stdout:
                 try:
@@ -205,6 +214,7 @@ class ProcessManager:
                             self._reg(lambda c: registry.append_event(c, run_id, "tool_use", act))
                 elif t == "result":
                     cost = evt.get("total_cost_usd")
+                    final_text = evt.get("result")
                     u = evt.get("usage", {}) or {}
                     inp, out = u.get("input_tokens"), u.get("output_tokens")
             await proc.wait()
@@ -221,7 +231,48 @@ class ProcessManager:
             await self.hub.broadcast({"type": "run_finished", "run_id": run_id,
                                       "status": status, "cost_usd": cost})
             _audit({"action": "finish", "run_id": run_id, "status": status, "cost_usd": cost})
+            # T4/T5: if this run was working a tracker task, link it back + advance the task.
+            tref = self._task_of.pop(run_id, None)
+            if tref:
+                with contextlib.suppress(Exception):
+                    root, tid = tref["root"], tref["id"]
+                    summary = (final_text or "").strip()[:200] or f"run {status}"
+                    if tref.get("review"):  # this WAS the Reviewer run
+                        tracker.link_run(root, tid, run_id, result=f"review: {summary}")
+                        tracker.set_status(root, tid, "review", actor="agent", note="reviewed")
+                    else:  # a worker run
+                        tracker.link_run(root, tid, run_id, result=summary)
+                        if status == "done" and tref.get("review_after"):
+                            asyncio.create_task(self._auto_review(root, tid))  # T5
+                        elif status == "done":
+                            tracker.set_status(root, tid, "review", actor="agent",
+                                               note="run finished")
+                        # error → leave in doing
             asyncio.create_task(self._dispatch())  # capacity freed — drain the queue
+
+    async def _auto_review(self, root: str, task_id: str) -> None:
+        """T5: dispatch the Reviewer persona to check a completed write run, then → review.
+        The Reviewer run is tagged review=True so its own finish moves the task (no recursion)."""
+        try:
+            t = tracker.read_task(root, task_id)
+            if t is None:
+                return
+            scoped = str((Path(root) / (t.get("scoped_dir") or ".")).resolve())
+            prompt = (f"Review the changes just made for this task; judge whether the acceptance "
+                      f"criteria are met and flag any issues.\n\nTask: {t['title']}\n{t.get('brief', '')}")
+            if t.get("acceptance"):
+                prompt += "\n\nAcceptance:\n" + "\n".join(f"- {a}" for a in t["acceptance"])
+            prompt += "\n\nUse `git diff` to see the changes. Give a short verdict, then issues."
+            await self.spawn("reviewer", prompt, add_dir=scoped,
+                             task_ref={"root": root, "id": task_id, "review": True})
+            tracker.add_update(root, task_id, "review", "Reviewer dispatched")
+        except SpawnError:
+            # couldn't dispatch (e.g. at capacity) — don't strand the task
+            with contextlib.suppress(Exception):
+                tracker.set_status(root, task_id, "review", actor="agent",
+                                   note="auto-review skipped (capacity)")
+        except Exception:
+            pass
 
     async def stop(self, run_id: str) -> bool:
         proc = self._active.get(run_id)

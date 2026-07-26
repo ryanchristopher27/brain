@@ -19,8 +19,11 @@ so voice stays unchanged and standalone.
 
 ## Run
 ```sh
-./voice/.venv/bin/python -m dashboard.server     # http://127.0.0.1:8766
+./voice/.venv/bin/python -m dashboard.server            # http://127.0.0.1:8766
+./voice/.venv/bin/python -m dashboard.server --reload   # dev: auto-restart on edits to dashboard/
 ```
+Use `--reload` while developing so backend edits pick up without a manual restart. (Agent runs
+spawned before a reload are orphaned — fine for dev.)
 Open the URL in a browser. Optionally run `python -m voice.daemon` too — the dashboard picks
 up the voice session automatically (the orb reflects it). Without voice, the dashboard still
 serves; the voice panel just shows disconnected.

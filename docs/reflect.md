@@ -292,3 +292,80 @@ Phase context: /plan → /brainstorm → /scaffold(inline) → /fleet(recon) →
 ## Suggested Next Phase
 **Commit, then your visual review.** The build is verified and the detector is clean — the
 natural close is locking it in, then a real look at the running dashboard.
+
+---
+
+# Reflect — Project & Task Tracker v1 (T1–T5)
+Date: 2026-07-26
+Type: Milestone (fleet-driven task tracker — closes brain's own loop)
+Phase context: /brainstorm → /plan (w/ cross-device pivot) → /scaffold (T1) → /build ×5
+
+## Accomplished
+- A **fleet-driven, cross-device task tracker**: git-versioned `.brain/tasks/*.md` per repo (T1),
+  a token-guarded task/project API (T2), a Kanban board + detail in the dashboard (T3), "work a
+  task" → scoped approved fleet run linked back (T4), and auto-Reviewer on write work → `review`
+  (T5). Verified end-to-end, including a real Builder→Reviewer auto-review run.
+- Closes brain's own loop: `/plan` milestones → tasks → fleet works them → Reviewer checks →
+  board reflects. brain planning and executing its own work.
+
+## What Worked
+- **"A task is a persistent, stateful fleet run."** That framing made T4/T5 tiny — a task just
+  tags a run (`task_ref`) and hooks the finish. Reusing the dashboard's registry / process
+  manager / D8 approval / D9 queue meant almost no new fleet code.
+- **The cross-device catch mid-plan.** Surfacing that SQLite-in-home doesn't travel, then pivoting
+  to git-versioned files, produced a *more* brain-native design (mirrors `docs/`; git = the change
+  history). Revising a locked decision beat shipping the wrong store.
+- **TDD scaffold.** T1 scaffolded the acceptance criteria as runnable *red* tests; build turned
+  them green. The idempotent-serialization test guaranteed clean git diffs by construction.
+- **Dogfooding as verification.** brain tracked its own T2 task through the lifecycle; T4/T5 were
+  proven with real Scout/Builder/Reviewer runs, not mocks.
+- **/fleet honesty held.** Correctly declined to fan out T1 (one tightly-coupled module) and the
+  sequential builds — built directly rather than force a conflict-prone swarm.
+
+## What Didn't Work
+- **Dev-server restart friction — again.** Every backend edit needed a manual kill + nohup
+  restart; no hot-reload. This is the *second* arc it's slowed (dashboard build + this). Overdue
+  for a `uvicorn --reload` dev mode.
+- **Throwaway-task cleanup in tests.** Verifying against real project roots meant creating tasks
+  in brain's repo and deleting the files after. A dedicated test-project fixture/root would be
+  cleaner than resolving live roots.
+- **Verification cost.** Real-agent verification adds up (a Scout run hit $0.16 earlier; T5 needs
+  a Builder + a Reviewer run). Worth it for the headline feature, but notable.
+
+## Decisions Reviewed
+- **Files over SQLite (cross-device):** validated — portable + git history, and simpler than a
+  sync layer.
+- **Random ids over sequential #numbers:** correct — collision-safe for offline multi-device.
+- **Auto-review gated to write runs** (deviation from "always"): sensible — reviewing a read-only
+  research run has nothing to diff. Flagged; one-line to flip.
+- **Reviewer run tagged `review=True`:** a real catch — without it the finish hook would recurse
+  (reviewer dispatching a reviewer, forever).
+
+## Surprises
+- The auto-Reviewer gave a *substantive* verdict against the acceptance criteria ("Acceptance
+  criteria met… 8 bytes, no trailing newline") — genuinely useful, not ceremony.
+- `git diff` in the Reviewer sees only *tracked* changes; a brand-new untracked file shows little.
+  The reviewer still assessed by reading, but review substance is weaker for untracked work.
+
+## Lessons Learned
+- **Reuse-first framing collapses scope.** Naming the new thing in terms of existing primitives
+  ("a task is a tagged run") turned a "build a tracker + fleet integration" epic into small hooks.
+- **A tagged async job needs a re-entrancy guard** — any finish-hook that can spawn more work must
+  mark its own spawns to avoid recursion (the `review=True` flag).
+- Recurring: **surface + revise locked decisions when a new hard requirement lands** (cross-device)
+  rather than forcing the old choice.
+
+## Memory Updates
+- Project memory kept current through T5. No new memory needed; the hardware-free-verification
+  feedback memory already covers the verification techniques used.
+
+## Next Steps
+1. **Commit** T1–T5 (large, complete, working, uncommitted slice).
+2. Optional **/review** of the tracker before extending.
+3. Deferred/optional: T6 backlog-pull (D9), T7 seed-from-`/plan` + GitHub sync, T8 planner.
+4. Small fix worth doing: `uvicorn --reload` dev mode (kills the recurring restart friction);
+   and consider letting the Reviewer see untracked changes (`git add -N` or `git status`).
+
+## Suggested Next Phase
+**Commit, then decide** between /review (harden before extending) and stopping at a clean v1.
+The optional T6–T8 are real features but v1 stands alone.

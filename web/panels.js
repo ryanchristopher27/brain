@@ -233,20 +233,141 @@ window.addEventListener("brain-run", (e) => {
   else if (m.type === "run_pending" || m.type === "run_denied") poll();
 });
 
+// ── task board (T3) ──────────────────────────────────────────────────────────
+const TASK_STATUSES = ["backlog", "ready", "doing", "review", "done"];
+let taskFilter = "";
+let selectedTask = null;
+let taskCtrlReady = false;
+
+function initTaskControls(projects) {
+  if (taskCtrlReady) return;
+  const filt = $("task-filter"), ntp = $("nt-project");
+  projects.forEach((p) => {
+    const o1 = el("option", null, `${p.name} (${p.tasks})`); o1.value = p.name; filt.append(o1);
+    const o2 = el("option", null, p.name); o2.value = p.name; ntp.append(o2);
+  });
+  filt.addEventListener("change", () => { taskFilter = filt.value; poll(); });
+  $("task-new-btn").addEventListener("click", () => {
+    const f = $("task-new-form"); f.hidden = !f.hidden;
+  });
+  $("task-new-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const title = $("nt-title").value.trim();
+    if (!title) { $("nt-msg").textContent = "title required"; return; }
+    const r = await apiPost("/api/tasks", {
+      project: $("nt-project").value, title, type: $("nt-type").value,
+      brief: $("nt-brief").value.trim(), scoped_dir: $("nt-dir").value.trim() || ".",
+    });
+    if (r.ok) {
+      $("nt-title").value = ""; $("nt-brief").value = ""; $("nt-msg").textContent = "";
+      $("task-new-form").hidden = true; poll();
+    } else $("nt-msg").textContent = r.data.error || `error ${r.status}`;
+  });
+  taskCtrlReady = true;
+}
+
+function renderTasks(tasks) {
+  const shown = taskFilter ? tasks.filter((t) => t.project === taskFilter) : tasks;
+  $("tasks-count").textContent = shown.length ? `(${shown.length})` : "";
+  fill($("task-board"), TASK_STATUSES.map((st) => {
+    const col = el("div", "col");
+    const items = shown.filter((t) => t.status === st);
+    col.append(el("div", "col-head", items.length ? `${st} · ${items.length}` : st));
+    items.forEach((t) => {
+      const c = el("div", "proj task-card");
+      c.append(el("span", "proj-name", t.title));
+      const meta = el("div", "task-meta");
+      meta.append(el("span", "chip cat", t.type));
+      if (t.assignee) meta.append(el("span", "chip", t.assignee));
+      meta.append(el("span", "task-proj", t.project));
+      c.append(meta);
+      c.onclick = () => { selectedTask = { project: t.project, id: t.id }; renderDetail(t); };
+      col.append(c);
+    });
+    return col;
+  }));
+  if (selectedTask) {
+    const t = shown.find((x) => x.id === selectedTask.id && x.project === selectedTask.project);
+    if (t) renderDetail(t); else { selectedTask = null; $("task-detail").hidden = true; }
+  }
+}
+
+function renderDetail(t) {
+  const d = $("task-detail"); d.hidden = false; d.replaceChildren();
+  const head = el("div", "detail-head");
+  head.append(el("span", "detail-title", t.title), el("span", "chip cat", t.type),
+    el("span", "row-meta", `#${t.id} · ${t.project}`));
+  const close = el("button", "btn", "close");
+  close.onclick = () => { selectedTask = null; d.hidden = true; };
+  head.append(close);
+  d.append(head);
+  if (t.brief) d.append(el("p", "detail-brief", t.brief));
+  if (t.acceptance && t.acceptance.length) {
+    d.append(el("div", "sub", "acceptance"));
+    const ul = el("ul", "detail-accept");
+    t.acceptance.forEach((a) => ul.append(el("li", null, a)));
+    d.append(ul);
+  }
+  const controls = el("div", "detail-controls");
+  const sel = el("select", "detail-status");
+  TASK_STATUSES.forEach((s) => {
+    const o = el("option", null, s); o.value = s; if (s === t.status) o.selected = true; sel.append(o);
+  });
+  const smsg = el("span", "run-msg");
+  sel.onchange = async () => {
+    const r = await apiPost(`/api/tasks/${t.project}/${t.id}/status`, { status: sel.value });
+    if (!r.ok) { sel.value = t.status; smsg.textContent = r.data.error || "invalid transition"; }
+    else poll();
+  };
+  controls.append(el("span", "sub", "status"), sel);
+  if (t.assignee) {
+    const wb = el("button", "btn ok", `work · ${t.assignee}`);
+    wb.onclick = async () => {
+      const r = await apiPost(`/api/tasks/${t.project}/${t.id}/work`, {});
+      smsg.textContent = r.ok ? "dispatched" : (r.data.error || "error");
+      if (r.ok) poll();
+    };
+    controls.append(wb);
+  }
+  controls.append(smsg);
+  d.append(controls);
+  const cbox = el("div", "detail-comment");
+  const ci = el("input", "comment-input"); ci.type = "text"; ci.placeholder = "add a comment…";
+  const cb = el("button", "btn", "add");
+  cb.onclick = async () => {
+    if (!ci.value.trim()) return;
+    await apiPost(`/api/tasks/${t.project}/${t.id}/update`, { detail: ci.value.trim() });
+    ci.value = ""; poll();
+  };
+  cbox.append(ci, cb); d.append(cbox);
+  if (t.runs && t.runs.length) {
+    d.append(el("div", "sub", "runs"));
+    const rl = el("div", "chips"); t.runs.forEach((r) => rl.append(el("span", "chip tool", r)));
+    d.append(rl);
+  }
+  d.append(el("div", "sub", "updates"));
+  const log = el("div", "detail-updates");
+  (t.updates || []).slice().reverse().forEach((u) => log.append(el("p", "act-line", u)));
+  d.append(log);
+}
+
 async function poll() {
   if (!dashboardMode) return;
   try {
-    const [agents, jobs, schedule, health, pipeline, runs] = await Promise.all([
+    const [agents, jobs, schedule, health, pipeline, runs, tasks, projects] = await Promise.all([
       api("/api/agents"), api("/api/jobs"), api("/api/schedule"),
       api("/api/health"), api("/api/pipeline"), api("/api/runs"),
+      api("/api/tasks"), api("/api/projects"),
     ]);
     initControls(agents);
+    initTaskControls(projects);
     renderAgents(agents);
     renderJobs(jobs);
     renderSchedule(schedule);
     renderHealth(health);
     renderPipeline(pipeline);
     renderRuns(runs);
+    renderTasks(tasks);
   } catch (_) {
     dashboardMode = false; // standalone voice, no dashboard API
   }

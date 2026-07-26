@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import data, registry
+from . import data, registry, tracker
 from .process_manager import ProcessManager, SpawnError
 from .voice_bridge import VoiceBridge
 
@@ -214,6 +214,151 @@ async def remove_task(item_id: str):
     return JSONResponse({"removed": ok}, status_code=200 if ok else 404)
 
 
+# ── task tracker (T2) — file-based tasks per repo ────────────────────────────
+def _project_root(name: str) -> Path | None:
+    """Resolve a project name to its root from the known set (allowlist — no path traversal)."""
+    for n, root in data._project_roots():
+        if n == name:
+            return root
+    return None
+
+
+@app.get("/api/projects")
+async def projects():
+    out = [{"name": n, "root": str(root), "tasks": len(tracker.list_tasks(root))}
+           for n, root in data._project_roots()]
+    return JSONResponse(out)
+
+
+@app.get("/api/tasks")
+async def tasks():
+    return JSONResponse(tracker.all_tasks())
+
+
+class TaskCreate(BaseModel):
+    project: str
+    title: str
+    type: str = "task"
+    brief: str = ""
+    acceptance: list[str] = []
+    assignee: str = ""
+    scoped_dir: str = "."
+
+
+@app.post("/api/tasks")
+async def create_task(req: TaskCreate):
+    root = _project_root(req.project)
+    if root is None:
+        return JSONResponse({"error": "unknown project"}, status_code=404)
+    if req.type not in tracker.TYPES:
+        return JSONResponse({"error": f"type must be one of {tracker.TYPES}"}, status_code=400)
+    t = tracker.create_task(root, req.title, type=req.type, brief=req.brief,
+                            acceptance=req.acceptance, assignee=req.assignee,
+                            scoped_dir=req.scoped_dir)
+    return JSONResponse({**t, "project": req.project})
+
+
+@app.get("/api/tasks/{project}/{task_id}")
+async def get_task(project: str, task_id: str):
+    root = _project_root(project)
+    t = tracker.read_task(root, task_id) if root else None
+    if t is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({**t, "project": project})
+
+
+class TaskPatch(BaseModel):
+    title: str | None = None
+    type: str | None = None
+    brief: str | None = None
+    acceptance: list[str] | None = None
+    assignee: str | None = None
+    scoped_dir: str | None = None
+
+
+@app.patch("/api/tasks/{project}/{task_id}")
+async def patch_task(project: str, task_id: str, req: TaskPatch):
+    root = _project_root(project)
+    if root is None:
+        return JSONResponse({"error": "unknown project"}, status_code=404)
+    fields = {k: v for k, v in req.model_dump().items() if v is not None}
+    try:
+        t = tracker.update_task(root, task_id, **fields)
+    except tracker.TrackerError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    return JSONResponse({**t, "project": project})
+
+
+class StatusReq(BaseModel):
+    status: str
+    note: str = ""
+
+
+@app.post("/api/tasks/{project}/{task_id}/status")
+async def task_status(project: str, task_id: str, req: StatusReq):
+    root = _project_root(project)
+    if root is None:
+        return JSONResponse({"error": "unknown project"}, status_code=404)
+    try:
+        t = tracker.set_status(root, task_id, req.status, actor="user", note=req.note)
+    except tracker.TrackerError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse({**t, "project": project})
+
+
+class CommentReq(BaseModel):
+    detail: str
+    kind: str = "comment"
+
+
+@app.post("/api/tasks/{project}/{task_id}/update")
+async def task_comment(project: str, task_id: str, req: CommentReq):
+    root = _project_root(project)
+    if root is None:
+        return JSONResponse({"error": "unknown project"}, status_code=404)
+    try:
+        tracker.add_update(root, task_id, req.kind, req.detail)
+    except tracker.TrackerError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/tasks/{project}/{task_id}/work")
+async def work_task(project: str, task_id: str):
+    """T4: dispatch the task's assignee as a scoped fleet run. Read-only personas run directly;
+    writers go through the D8 approval flow. The run is tagged so its result links back on finish."""
+    root = _project_root(project)
+    if root is None:
+        return JSONResponse({"error": "unknown project"}, status_code=404)
+    t = tracker.read_task(root, task_id)
+    if t is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if not t["assignee"]:
+        return JSONResponse({"error": "assign a persona first"}, status_code=400)
+    agents = {a["name"]: a for a in data.read_agents()}
+    ag = agents.get(t["assignee"])
+    if ag is None:
+        return JSONResponse({"error": f"unknown persona {t['assignee']}"}, status_code=400)
+
+    scoped = str((Path(root) / (t["scoped_dir"] or ".")).resolve())
+    prompt = t["title"]
+    if t["brief"]:
+        prompt += "\n\n" + t["brief"]
+    if t["acceptance"]:
+        prompt += "\n\nAcceptance criteria:\n" + "\n".join(f"- {a}" for a in t["acceptance"])
+    # write work gets an auto-Reviewer pass on finish; read-only work goes straight to review.
+    task_ref = {"root": str(root), "id": task_id, "review_after": not ag["read_only"]}
+    try:
+        if ag["read_only"]:
+            res = await pm.spawn(t["assignee"], prompt, add_dir=scoped, task_ref=task_ref)
+        else:
+            res = await pm.propose(t["assignee"], prompt, add_dir=scoped, task_ref=task_ref)
+    except SpawnError as e:
+        return JSONResponse({"error": str(e)}, status_code=e.status)
+    tracker.set_status(root, task_id, "doing", actor="user", note=f"work started ({t['assignee']})")
+    return JSONResponse(res)
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     # ws upgrades bypass http middleware — re-check host/origin + require the token here.
@@ -241,10 +386,17 @@ app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
 
 
 def main() -> None:
+    import sys
     import uvicorn
 
     print(f"[dashboard] http://{HOST}:{PORT}  (token at {TOKEN_PATH})")
-    uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
+    if "--reload" in sys.argv:
+        # Dev mode: auto-restart on edits to dashboard/. (Spawned agent runs are orphaned on a
+        # reload — fine for development.) Reload requires the app as an import string.
+        uvicorn.run("dashboard.server:app", host=HOST, port=PORT, log_level="warning",
+                    reload=True, reload_dirs=[str(Path(__file__).parent)])
+    else:
+        uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
 
 
 if __name__ == "__main__":

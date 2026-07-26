@@ -235,6 +235,46 @@ button, select, input {
 .act-line { font-size: 0.74rem; color: var(--muted); font-family: ui-monospace, SFMono-Regular, monospace; overflow-wrap: anywhere; }
 @media (max-width: 720px) { .runs-cols { grid-template-columns: 1fr; } }
 
+/* ── task board (T3) ─────────────────────────────────────────────────────── */
+[hidden] { display: none !important; }
+.task-controls { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.7rem; }
+.task-controls select, #task-new-btn,
+.task-new select, .task-new input, .task-new button {
+  background: var(--panel-2); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 7px; padding: 0.4rem 0.6rem; font: inherit; font-size: 0.82rem; min-height: 34px;
+}
+#task-new-btn, .task-new button { cursor: pointer; font-weight: 600; }
+.task-new { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.8rem; }
+.task-new input { flex: 1; min-width: 140px; }
+.task-new input::placeholder, .comment-input::placeholder { color: var(--muted); }
+
+.task-card { cursor: pointer; }
+.task-card:hover { border-color: color-mix(in oklch, var(--listening) 45%, var(--border)); }
+.task-meta { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.task-proj { font-size: 0.66rem; color: var(--muted); margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, monospace; }
+
+.task-detail {
+  margin-top: 1rem; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 1rem 1.1rem; display: grid; gap: 0.7rem;
+}
+.detail-head { display: flex; align-items: center; gap: 0.6rem; }
+.detail-title { font-weight: 650; font-size: 1rem; }
+.detail-head .btn { margin-left: auto; }
+.detail-brief { color: var(--fg); line-height: 1.5; }
+.detail-accept { margin: 0.2rem 0 0 1rem; color: var(--muted); font-size: 0.85rem; display: grid; gap: 0.2rem; }
+.detail-controls { display: flex; align-items: center; gap: 0.5rem; }
+.detail-status {
+  background: var(--panel); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.35rem 0.5rem; font: inherit; font-size: 0.8rem; min-height: 32px;
+}
+.detail-comment { display: flex; gap: 0.5rem; }
+.comment-input {
+  flex: 1; background: var(--panel); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.4rem 0.6rem; font: inherit; font-size: 0.82rem; min-height: 34px;
+}
+.detail-updates { display: flex; flex-direction: column; gap: 0.2rem; max-height: 26vh; overflow-y: auto; }
+
 /* ── the orb (C2, preserved) ─────────────────────────────────────────────── */
 .orb {
   position: relative;

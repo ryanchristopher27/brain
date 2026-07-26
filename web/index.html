@@ -32,6 +32,26 @@
       <div id="pipeline" class="board"><p class="empty">loading…</p></div>
     </section>
 
+    <!-- Task tracker: Kanban by status + create + detail (git-versioned .brain/tasks/) -->
+    <section class="panel board-panel tasks-panel">
+      <h2>tasks <span id="tasks-count" class="count"></span></h2>
+      <div class="task-controls">
+        <select id="task-filter" aria-label="filter by project"><option value="">all projects</option></select>
+        <button id="task-new-btn" type="button">+ new task</button>
+      </div>
+      <form id="task-new-form" class="task-new" hidden>
+        <select id="nt-project" aria-label="project"></select>
+        <input id="nt-title" type="text" placeholder="task title…" />
+        <select id="nt-type" aria-label="type"><option>task</option><option>issue</option><option>bug</option></select>
+        <input id="nt-dir" type="text" placeholder="scoped dir (default .)" />
+        <input id="nt-brief" type="text" placeholder="brief (optional)…" />
+        <button id="nt-create" type="submit">create</button>
+        <span id="nt-msg" class="run-msg"></span>
+      </form>
+      <div id="task-board" class="board"><p class="empty">loading…</p></div>
+      <div id="task-detail" class="task-detail" hidden></div>
+    </section>
+
     <!-- Agent runs: spawn/propose/approve/stop + live activity + cost -->
     <section class="panel runs-panel">
       <h2>agent runs <span id="runs-totals" class="count"></span></h2>
