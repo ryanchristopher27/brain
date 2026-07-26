@@ -100,16 +100,43 @@ function rowLine(dotCls, title, meta) {
   return row;
 }
 
+// ── work pipeline (Kanban) ───────────────────────────────────────────────────
+function renderPipeline(p) {
+  fill($("pipeline"), p.columns.map((col) => {
+    const column = el("div", "col");
+    column.append(el("div", "col-head", col));
+    const cards = p.projects.filter((pr) => pr.phase === col);
+    cards.forEach((pr) => {
+      const c = el("div", "proj");
+      c.dataset.persona = ""; // reserved for future agent linkage
+      c.append(el("span", "proj-name", pr.name));
+      const badges = el("div", "badges");
+      p.columns.forEach((ph) => {
+        const b = el("span", "badge" + (pr.detected.includes(ph) ? " on" : ""));
+        b.title = ph;
+        badges.append(b);
+      });
+      c.append(badges);
+      if (pr.iterating) c.append(el("span", "tag", "iterating"));
+      if (pr.override) c.append(el("span", "tag", "pinned"));
+      column.append(c);
+    });
+    return column;
+  }));
+}
+
 async function poll() {
   if (!dashboardMode) return;
   try {
-    const [agents, jobs, schedule, health] = await Promise.all([
-      api("/api/agents"), api("/api/jobs"), api("/api/schedule"), api("/api/health"),
+    const [agents, jobs, schedule, health, pipeline] = await Promise.all([
+      api("/api/agents"), api("/api/jobs"), api("/api/schedule"),
+      api("/api/health"), api("/api/pipeline"),
     ]);
     renderAgents(agents);
     renderJobs(jobs);
     renderSchedule(schedule);
     renderHealth(health);
+    renderPipeline(pipeline);
   } catch (_) {
     dashboardMode = false; // standalone voice, no dashboard API
   }

@@ -161,6 +161,22 @@ body {
 .dot.idle { background: var(--muted); }
 .dot.unknown { background: var(--warn); }
 
+/* ── work pipeline (Kanban) ──────────────────────────────────────────────── */
+.board-panel { grid-column: 1 / -1; }
+.board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(132px, 1fr); gap: 0.6rem; overflow-x: auto; }
+.col { background: var(--panel-2); border: 1px solid var(--border); border-radius: 9px; padding: 0.55rem; display: flex; flex-direction: column; gap: 0.5rem; min-height: 60px; }
+.col-head { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 600; }
+.proj { background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 0.5rem 0.55rem; display: grid; gap: 0.4rem; }
+.proj-name { font-weight: 600; font-size: 0.82rem; overflow-wrap: anywhere; }
+.badges { display: flex; gap: 3px; }
+.badge { width: 7px; height: 7px; border-radius: 50%; background: color-mix(in oklch, var(--border) 80%, transparent); }
+.badge.on { background: var(--ok); }
+.tag {
+  font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--warn); border: 1px solid color-mix(in oklch, var(--warn) 35%, transparent);
+  border-radius: 999px; padding: 0.04rem 0.4rem; justify-self: start;
+}
+
 /* ── the orb (C2, preserved) ─────────────────────────────────────────────── */
 .orb {
   position: relative;

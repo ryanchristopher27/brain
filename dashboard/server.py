@@ -135,6 +135,11 @@ async def schedule():
     return JSONResponse(data.read_schedule())
 
 
+@app.get("/api/pipeline")
+async def pipeline():
+    return JSONResponse(data.read_pipeline())
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     # ws upgrades bypass http middleware — re-check host/origin + require the token here.

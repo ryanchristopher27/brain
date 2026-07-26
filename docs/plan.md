@@ -637,3 +637,23 @@ bash). Missing one ⇒ silent partial data.
 **D2** (orb absorbed as active-session panel) →
 **D7** (pipeline board). Visual checkpoint (human) at D2 + D7. Backend (D1/D3) is the autonomous-
 friendly slice; D2/D7 need eyes.
+
+---
+
+## Agent Dashboard — D7 build note
+Date: 2026-07-25
+
+**Deviation from the locked "most-advanced-phase-wins" tiebreak** (surfaced by testing against
+reality): most-advanced-wins mis-placed actively-cycling projects — brain has a `reflect.md`
+from a prior cycle but is *currently* in plan/build, so it wrongly showed in Reflect.
+
+**Revised rule (shipped in D7):** a card's **column = the most-recently-active phase** (the phase
+whose artifact was modified last — doc mtime for brainstorm/plan/review/reflect; newest source
+mtime for build; manifest mtime for scaffold). The **"reached" badges** on each card preserve the
+most-advanced/progress info. `.brain-phase` file override still supported. Projects come from
+`~/.claude/brain/projects.json` if present, else sibling dirs containing `docs/plan.md` or
+`docs/brainstorm.md`. Verified: brain→plan, ryans-boomin-beats→build.
+
+**Phase 1 COMPLETE:** D1 (server+security+proxy) · D2 (dashboard shell + orb tile) · D3
+(agents/jobs/schedule/health panels) · D7 (pipeline board). Remaining (optional, later): D4/D5
+(actions + controls), D8 (run-level approval), D6 (SQLite registry), D9 (queue).
