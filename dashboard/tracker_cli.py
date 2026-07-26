@@ -32,6 +32,21 @@ def _root(args) -> Path:
              f"{[n for n, _ in data._project_roots()]})")
 
 
+def _resolve_id(root: Path, args) -> str:
+    """Return the task id from --id, or resolve --source. If a source has no task, skip cleanly
+    (exit 0) — workflow hooks call these even when the milestone isn't tracked."""
+    if getattr(args, "id", None):
+        return args.id
+    src = getattr(args, "source", None)
+    if src:
+        t = tracker.find_by_source(root, src)
+        if t:
+            return t["id"]
+        print(f"no task for source: {src} (skipped)")
+        sys.exit(0)
+    sys.exit("need --id or --source")
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="tracker_cli")
     p.add_argument("--project"); p.add_argument("--root")
@@ -51,14 +66,14 @@ def main(argv: list[str] | None = None) -> int:
     u.add_argument("--assignee", default="")
 
     s = sub.add_parser("status")
-    s.add_argument("--id", required=True); s.add_argument("--to", required=True)
+    s.add_argument("--id"); s.add_argument("--source"); s.add_argument("--to", required=True)
     s.add_argument("--note", default=""); s.add_argument("--actor", default="user")
 
     cm = sub.add_parser("comment")
-    cm.add_argument("--id", required=True); cm.add_argument("--detail", required=True)
+    cm.add_argument("--id"); cm.add_argument("--source"); cm.add_argument("--detail", required=True)
 
     ln = sub.add_parser("link")
-    ln.add_argument("--id", required=True); ln.add_argument("--run", required=True)
+    ln.add_argument("--id"); ln.add_argument("--source"); ln.add_argument("--run", required=True)
     ln.add_argument("--result", default=None)
 
     args = p.parse_args(argv)
@@ -81,14 +96,17 @@ def main(argv: list[str] | None = None) -> int:
                                     brief=args.brief, assignee=args.assignee)
             print(f"{'created' if t.get('_created') else 'updated'} #{t['id']}  {t['title']}")
         elif args.cmd == "status":
-            t = tracker.set_status(root, args.id, args.to, actor=args.actor, note=args.note)
-            print(f"#{args.id} → {t['status']}")
+            tid = _resolve_id(root, args)
+            t = tracker.set_status(root, tid, args.to, actor=args.actor, note=args.note)
+            print(f"#{tid} → {t['status']}")
         elif args.cmd == "comment":
-            tracker.add_update(root, args.id, "comment", args.detail)
-            print(f"#{args.id} commented")
+            tid = _resolve_id(root, args)
+            tracker.add_update(root, tid, "comment", args.detail)
+            print(f"#{tid} commented")
         elif args.cmd == "link":
-            tracker.link_run(root, args.id, args.run, result=args.result)
-            print(f"#{args.id} linked {args.run}")
+            tid = _resolve_id(root, args)
+            tracker.link_run(root, tid, args.run, result=args.result)
+            print(f"#{tid} linked {args.run}")
     except tracker.TrackerError as e:
         sys.exit(f"error: {e}")
     return 0

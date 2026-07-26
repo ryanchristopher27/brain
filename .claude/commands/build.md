@@ -54,6 +54,35 @@ After completing a task:
 3. In collaborative mode: invite feedback before continuing
 4. If a milestone is now complete: flag it and suggest `/review` before the next milestone
 
+## Task Sync (tracker)
+
+Keep the tracker task for the milestone you're building current (auto — then report). Milestones
+seeded by `/plan` have a task with source `plan:<project>:<milestone-id>`. Docs stay the record;
+the tracker reflects progress.
+
+Resolve paths once:
+```bash
+BRAIN="$(python3 -c "import os;p=os.path.realpath(os.path.expanduser('~/.claude/commands/build.md'));print(os.path.dirname(os.path.dirname(os.path.dirname(p))))")"
+PROJ="$(basename "$PWD")"; ID="<milestone-id>"   # e.g. the milestone named in the /build argument
+```
+- **On starting** the milestone → mark it in progress:
+  ```bash
+  python3 "$BRAIN/dashboard/tracker_cli.py" --root "$PWD" status --source "plan:$PROJ:$ID" --to doing --note "building"
+  ```
+- **On completing** it (built + verified) → move to review + log a one-line result:
+  ```bash
+  python3 "$BRAIN/dashboard/tracker_cli.py" --root "$PWD" status  --source "plan:$PROJ:$ID" --to review --note "built + verified"
+  python3 "$BRAIN/dashboard/tracker_cli.py" --root "$PWD" comment --source "plan:$PROJ:$ID" --detail "<what was built>"
+  ```
+  If a **fleet run** produced the work, also link it:
+  ```bash
+  python3 "$BRAIN/dashboard/tracker_cli.py" --root "$PWD" link --source "plan:$PROJ:$ID" --run <run_id> --result "<summary>"
+  ```
+
+Guardrails: the CLI **skips cleanly** if the milestone has no tracked task (not every build targets
+one). Move a task to `review`, not `done` — a human or `/review`/`/reflect` closes it. Never fail
+the build over task sync.
+
 ## Deviation Rule
 
 Any time implementation deviates from the plan — for any reason:

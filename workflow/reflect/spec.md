@@ -141,3 +141,7 @@ Both are suggestions only. User can dismiss and move on.
 - **Prior reflections inform this one** — check `docs/reflect.md` for patterns across sessions; note if the same friction keeps appearing
 - **Memory updates are suggested, not automatic** — flag what should go to memory; don't write it without the user knowing
 - **Project close reflections go deeper by default** — a session-end reflect is lighter; a project-close reflect should be more thorough
+- **Task sync:** reconcile the tracker — close genuinely-complete tasks (usually in `review`) to
+  `done` (allowed here; human phase), and file each **Next Step** as a backlog task via
+  `dashboard/tracker_cli.py` (upsert, idempotent by `reflect:<project>:<slug>`), then report.
+  Only close what's truly done; never fail the reflection over sync.

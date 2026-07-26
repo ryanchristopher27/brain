@@ -108,6 +108,29 @@ Flag these to the user — don't write without their awareness:
 - **Suggested next phase** — which command fits and why (`/build`, `/review`, `/iterate`, `/ship`, `/brainstorm`, `/plan`)
 - **Confidence check** — any decisions that feel shaky and may need revisiting
 
+## Task Sync (tracker)
+
+Reconcile the tracker with what the reflection establishes — then report. This is a human phase,
+so closing to `done` is allowed here.
+
+Resolve paths once:
+```bash
+BRAIN="$(python3 -c "import os;p=os.path.realpath(os.path.expanduser('~/.claude/commands/reflect.md'));print(os.path.dirname(os.path.dirname(os.path.dirname(p))))")"
+PROJ="$(basename "$PWD")"
+```
+- **Close finished work** — for tasks the reflection confirms complete (usually those in `review`),
+  close them:
+  ```bash
+  python3 "$BRAIN/dashboard/tracker_cli.py" --root "$PWD" status --source "<task source>" --to done --actor user --note "reflected: complete"
+  ```
+  (or `--id`). Only close what's genuinely done — don't sweep open work.
+- **File next steps** — for each item in the reflection's **Next Steps**, upsert a backlog task
+  (idempotent by slug):
+  ```bash
+  python3 "$BRAIN/dashboard/tracker_cli.py" --root "$PWD" upsert --source "reflect:$PROJ:<slug>" --title "<next step>" --type task --brief "<context>"
+  ```
+Report: `Closed X tasks · filed Y next-steps → tracker`. Never fail the reflection over task sync.
+
 ## Recurring Patterns
 
 Check `docs/reflect.md` for prior entries. If the same friction, mistake, or question keeps appearing across sessions — name it explicitly. Patterns are more valuable than one-off observations.

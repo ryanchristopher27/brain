@@ -127,3 +127,7 @@ Never force the handoff — always a suggestion.
 - **Blockers get options** — never just stop with a problem; always bring a recommendation
 - **Plan is the source of truth** — if code and plan conflict, flag the conflict; don't silently pick one
 - **Milestone-complete = review prompt** — suggest `/review` at natural completion points
+- **Task sync:** keep the milestone's tracker task current — `doing` on start, `review` (+ comment,
+  + run link if a fleet run did it) on completion — via `dashboard/tracker_cli.py` by `source`
+  (`plan:<project>:<milestone-id>`). Skips cleanly if the milestone isn't tracked; move to `review`,
+  not `done` (a human/`/review`/`/reflect` closes). Never fail the build over task sync.

@@ -118,6 +118,27 @@ Summarize what's been deferred to `/iterate`:
 - Suggested priority order
 - Note which are blocking ship vs. optional
 
+## Task Sync (tracker)
+
+File the **actionable findings** (not the positives / "what's working") as tasks in the tracker —
+then report. Idempotent by a slug-derived `source`, so re-reviewing the same finding updates rather
+than duplicating.
+
+Resolve paths once:
+```bash
+BRAIN="$(python3 -c "import os;p=os.path.realpath(os.path.expanduser('~/.claude/commands/review.md'));print(os.path.dirname(os.path.dirname(os.path.dirname(p))))")"
+PROJ="$(basename "$PWD")"
+```
+For each finding, upsert an issue/bug task (`--type bug` for correctness/security, `--type issue`
+for quality/nits); `<slug>` = a short kebab of the finding title:
+```bash
+python3 "$BRAIN/dashboard/tracker_cli.py" --root "$PWD" upsert \
+  --source "review:$PROJ:<slug>" --type bug \
+  --title "<finding summary>" --brief "<severity · location · detail>"
+```
+Report: `Filed N findings → tracker (X new, Y updated)`. Guardrails: only actionable findings;
+skip the positives; never fail the review over task sync (skip + note if tooling isn't resolvable).
+
 ## Behavior Rules
 
 - **After /build: auto-scope** — infer from session changes, don't ask

@@ -369,3 +369,65 @@ Phase context: /brainstorm → /plan (w/ cross-device pivot) → /scaffold (T1) 
 ## Suggested Next Phase
 **Commit, then decide** between /review (harden before extending) and stopping at a clean v1.
 The optional T6–T8 are real features but v1 stands alone.
+
+---
+
+# Reflect — Workflow ↔ Tracker Integration (W1–W5)
+Date: 2026-07-26
+Type: Milestone (self-maintaining tracker; brain's loop fully closed)
+Phase context: /plan → /build ×5 (W1–W5), fully dogfooded through the tracker itself
+
+## Accomplished
+- Wired the tracker into the workflow: `/plan` seeds a task per milestone, `/build` moves it
+  doing→review + links the run, `/review` files findings as bug/issue tasks, `/reflect` closes
+  done + files next-steps. Backed by `tracker.py` `source`+`upsert` (W1) and a standalone
+  `tracker_cli.py`; hooks added to all four command prompts (+ specs kept in sync).
+- Seeded brain's open backlog (11 tasks) and dogfooded the whole thing — the W-series was tracked
+  and closed to `done` via the very hooks being built.
+
+## What Worked
+- **Prompt-driven sync beats parsing.** Each command already holds its output in context, so it
+  calls the CLI directly — no fragile markdown-table parsing. Simple and robust.
+- **Idempotent `source` keys** (`plan:`/`review:`/`reflect:` prefixes) made re-running a phase
+  update-in-place instead of duplicating — verified for every hook.
+- **Dogfooding end-to-end.** brain tracked building the tracker integration; each W-milestone
+  moved backlog→doing→review→done through the hooks. The feature validated itself.
+- **Catching the standalone-CLI prerequisite** (relative imports break when run from another
+  project's cwd) *before* wiring the hooks — a "verify the mechanism, not just the unit" catch.
+
+## What Didn't Work
+- **I mis-stated the command-reload model.** I repeatedly hedged "hooks take effect next session."
+  Wrong for *existing* commands — this reflect proved their content is re-read per invocation, so
+  the hooks were live immediately. Only *new* command registration needs a restart.
+- **W1 wasn't seeded as a task** (it was in-progress when the backlog was seeded) — a cosmetic gap:
+  W2–W5 have tracker tasks, W1 doesn't.
+
+## Decisions Reviewed
+- **Docs = design record, tracker mirrors:** held cleanly; no divergence.
+- **Auto + report:** right call — the summaries keep the (non-guaranteed, prompt-driven) sync visible.
+- **CLI over API:** correct — works with the dashboard server down; the workflow shouldn't depend
+  on a running server.
+- **Move-to-`review` from /build, `done` only from /reflect or a human:** consistent choke point.
+
+## Surprises
+- **Command reload has two modes:** editing an existing command's `.md` → effective next invocation
+  (re-read); adding a new command → needs a session restart to register. Explains why `/fleet`
+  needed a restart but the `/plan`…/`/reflect` hooks went live immediately.
+
+## Lessons Learned
+- **Verify the invocation mechanism, not just the code.** The CLI's unit tests passed, but it would
+  have failed from a real project's cwd (relative imports) — caught by testing the actual hook path.
+- **Know your tooling's reload semantics before claiming when a change takes effect.** (Document it.)
+
+## Memory Updates
+- Project memory current. Candidate for **CLAUDE.md**: the command-reload nuance (edit existing →
+  next invocation; new command → restart to register) — a real brain convention worth recording.
+
+## Next Steps
+1. **Commit** W1–W5 (the big uncommitted slice).
+2. Optional, already tracked on the board: T6 backlog-pull, T7 GitHub sync, T8 planner; plus the
+   dashboard-harden + reviewer-untracked issues.
+3. Small: seed a W1 task for completeness; add the command-reload note to CLAUDE.md.
+
+## Suggested Next Phase
+**Commit.** The integration is complete, verified, and dogfooded — lock it in.

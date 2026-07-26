@@ -181,3 +181,6 @@ After the review, produce a summary of what's been deferred:
 - **Security is always checked** — even if the user asks for code quality only, flag critical security issues
 - **Prior reviews inform this one** — check if previously flagged issues were resolved; note if they weren't
 - **No false positives** — do not flag things that are intentional design choices documented in the plan or `CLAUDE.md`
+- **Task sync:** file actionable findings (not positives) as tracker issue/bug tasks via
+  `dashboard/tracker_cli.py upsert`, idempotent by a slug-derived `source` (`review:<project>:<slug>`),
+  then report. `bug` for correctness/security, `issue` for quality. Never fail the review over sync.
