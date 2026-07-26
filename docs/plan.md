@@ -1163,3 +1163,105 @@ A project with no `.brain/tasks/` simply contributes none.
 |----------|--------|-----------|------|
 | Auto-review scope | **Write runs only** (read-only → straight to review) | Reviewing a read-only research run has nothing to diff; cheaper | 2026-07-26 |
 | Dev server | **`--reload` mode added** to `dashboard.server` | Kills the recurring manual kill+nohup restart friction | 2026-07-26 |
+
+---
+
+# Plan — Workflow ↔ Tracker Integration
+Date: 2026-07-26
+Status: Draft
+Brainstorm: inline (folds the "integrate task CRUD into workflow steps" decision)
+
+## Overview
+Wire the brain workflow commands to create and maintain tracker tasks automatically, so the
+tracker stays in sync with the work without a manual step. **Docs remain the design record; the
+tracker mirrors the actionable, stateful items** seeded from them. Each phase acts **auto + report**
+(does it, then tells you). Supersedes the narrow T7 ("seed from /plan") with a broader integration.
+
+## Goals & Success Criteria
+- **G1 — Planned work is tracked.** Running `/plan` creates a task per milestone in the tracker.
+- **G2 — Building maintains state.** `/build` moves the task it's building doing→review/done and
+  links the fleet run.
+- **G3 — Reviews and reflects feed the tracker.** `/review` files issues; `/reflect` closes done
+  tasks and files "next steps" as backlog.
+- **G4 — Idempotent.** Re-running a phase updates existing tasks (by `source` key), never dupes.
+- **Success =** run `/plan` on a project → its milestones appear as tracked tasks; `/build` a
+  milestone → the task advances + links the run; all without manual tracker edits.
+
+## Scope
+### In Scope
+- A `source` field on tasks + an idempotent **upsert-by-source** in `tracker.py`.
+- A thin **tracker CLI** (`dashboard/tracker_cli.py`) over `tracker.py` — works without the server.
+- A "task sync" section added to the `plan`, `build`, `review`, `reflect` command prompts.
+- `install.sh` re-sync so the updated commands propagate globally.
+### Out of Scope (v1)
+- Retroactively seeding the *existing* (mostly-done) plan.md milestones — this wires **going
+  forward**; the current open-item backlog is a separate one-time seed.
+- `/brainstorm`, `/scaffold`, `/iterate` hooks (add after the core four prove out).
+- Markdown-table parsing (the sync is prompt-driven off in-context content, not a parser).
+- Sub-tasks, labels, milestones-as-first-class (tracker richness deferred).
+
+## Tech Stack & Architecture
+
+### Mechanism (prompt-driven, CLI-backed)
+The workflow commands are AI-run markdown prompts. Each already holds its output in context, so its
+prompt instructs the AI to call the tracker CLI to upsert tasks from that content — no parsing.
+```
+/plan   → for each milestone: tracker_cli upsert --project <p> --source plan:<p>:<id> \
+                                   --title <m> --type task --status backlog
+/build  → tracker_cli status  --project <p> --id <task> doing|review; tracker_cli link ...
+/review → for each finding:   tracker_cli create --project <p> --type bug --title <finding>
+/reflect→ tracker_cli status ... done  (closed items);  create backlog tasks for "next steps"
+```
+- **`source` key** (`plan:<project>:<milestone-id>`) makes upsert idempotent across re-runs.
+- **CLI over the API** so it works with the dashboard server down (writes files via `tracker.py`).
+- **Auto + report:** the phase performs the sync and prints a task summary; docs are still written.
+
+### Files
+- `dashboard/tracker.py` — add `source` to frontmatter + `upsert_task(root, source, **fields)` /
+  `find_by_source`.
+- `dashboard/tracker_cli.py` — argparse: `create · upsert · status · comment · link · list`;
+  resolves project→root via `data._project_roots()` (or `--root`).
+- `.claude/commands/{plan,build,review,reflect}.md` — a "## Task sync (tracker)" section each.
+- `install.sh` re-run to sync the command changes.
+
+## Milestones
+| # | Milestone | Description | Dependencies |
+|---|-----------|-------------|--------------|
+| W1 | Tracker `source` + CLI | Add `source` field + `upsert_by_source` to `tracker.py`; build `tracker_cli.py` (create/upsert/status/comment/link/list); tests | tracker T1 |
+| W2 | `/plan` hook | Add task-sync to `plan.md`: upsert a task per milestone (`source=plan:<proj>:<id>`, status backlog); report | W1 |
+| W3 | `/build` hook | Add to `build.md`: on building a task → status doing→review/done + link the run | W1 |
+| W4 | `/review` hook | Add to `review.md`: findings → issue/bug tasks | W1 |
+| W5 | `/reflect` hook | Add to `reflect.md`: close done tasks + file "next steps" as backlog | W1 |
+
+**v1 = W1–W3** (the core loop: plan seeds, build maintains). W4/W5 follow.
+
+## Risks & Mitigations
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|-----------|
+| Re-running a phase duplicates tasks | High | Med | `source`-key upsert (idempotent create-or-update) |
+| Prompt-driven sync isn't guaranteed (AI may skip it) | Med | Med | Make the CLI dead-simple + the instruction explicit + "report" surfaces when it ran; user sees the summary |
+| Editing command files changes global behavior | Med | Med | Standard brain flow (edit `.claude/commands/*` + re-run install.sh); test in a fresh session |
+| /build vs manual status conflict | Low | Low | Read current status before changing; append-only log preserves history |
+| Which project a phase targets | Med | Low | Default to the cwd repo; `--project` overrides |
+
+## Open Questions
+1. **Milestone granularity** — one task per milestone row (recommended v1); sub-tasks later?
+2. **/build task selection** — does `/build` pull the next `ready` task from the tracker, or just
+   update the milestone it's told to build? (Lean: update what's being built; pull later with T6.)
+3. **Existing backlog** — one-time seed of the current open items (separate from this going-forward
+   wiring) — do it alongside W1?
+
+## Decisions Log
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Sync mechanism | Prompt-driven + tracker CLI | Commands hold output in context; avoids fragile markdown parsing | 2026-07-26 |
+| Idempotency | `source` key + upsert | Re-running phases updates, never dupes | 2026-07-26 |
+| Source of truth | Docs = design record; tracker mirrors | User-selected | 2026-07-26 |
+| Autonomy | Auto + report | User-selected | 2026-07-26 |
+| Phases wired | plan · build · review · reflect | User-selected (brainstorm/scaffold/iterate later) | 2026-07-26 |
+
+## Handoff Readiness (for /scaffold or /build)
+- Tech decided: ✅ `source`+upsert in tracker.py, `tracker_cli.py`, command-prompt hooks, install sync.
+- Structure clear: ✅ CLI + per-command "task sync" sections.
+- Entry points: ✅ `dashboard/tracker_cli.py`; the four command files.
+- **v1 slice = W1–W3.** Open Qs are minor (safe defaults). W1 (source+CLI) is the keystone.

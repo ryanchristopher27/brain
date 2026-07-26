@@ -152,3 +152,7 @@ These are the minimum inputs `/scaffold` needs to generate the file structure. I
 - For mid-project invocations: read the existing plan, scope the new plan section tightly, and note how it relates to existing decisions
 - If the user contradicts a prior decision from brainstorm or an earlier plan version, surface the conflict and ask them to confirm the change
 - The plan doc is a living artifact — it should be updatable, not a one-shot output
+- **Task sync:** after writing/updating the Milestones table, mirror each milestone into the
+  project's tracker (via `dashboard/tracker_cli.py upsert`, idempotent by `source` key), then
+  report. Docs stay the design record; the tracker holds the actionable items. Never fail the
+  plan over task sync — skip and note if the tooling isn't resolvable.

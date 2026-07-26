@@ -101,6 +101,31 @@ Brainstorm: [path to brainstorm doc, or "inline" if mini-brainstorm was run]
 | Decision | Choice | Reasoning | Date |
 ```
 
+## Task Sync (tracker)
+
+After writing or updating the **Milestones** table, mirror each milestone into the project's task
+tracker — then report what changed. `docs/plan.md` stays the design record; the tracker holds the
+actionable, stateful items. This is automatic (do it, then summarize), and idempotent (re-running
+`/plan` updates existing tasks by `source` key, never duplicates).
+
+1. Resolve the brain repo path (the tracker CLI lives there, not in the user's project):
+   ```bash
+   BRAIN="$(python3 -c "import os;p=os.path.realpath(os.path.expanduser('~/.claude/commands/plan.md'));print(os.path.dirname(os.path.dirname(os.path.dirname(p))))")"
+   PROJ="$(basename "$PWD")"
+   ```
+2. For **each real milestone row** you just wrote (skip revision/decision tables), upsert a task —
+   using the milestone id (M1, T3, D4, …) as both the source suffix and the title prefix:
+   ```bash
+   python3 "$BRAIN/dashboard/tracker_cli.py" --root "$PWD" upsert \
+     --source "plan:$PROJ:<milestone-id>" \
+     --title "<milestone-id> — <milestone name>" --type task --brief "<one-line description>"
+   ```
+3. Report a one-line summary: `Synced N milestones → tracker (X created, Y updated)`.
+
+Guardrails: the CLI is stdlib-only and writes git-versioned `.brain/tasks/` files. If `python3`
+or `$BRAIN` can't be resolved, note it and skip — **never fail the plan over task sync**. Only sync
+milestone rows, not the revision/decision-log tables.
+
 ## Before Closing
 
 Confirm these are resolved (needed by `/scaffold`):

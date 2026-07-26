@@ -94,6 +94,23 @@ def test_missing_tracker_dir_is_empty():
     assert tracker.list_tasks(_repo()) == []   # repo with no .brain/tasks/ → [], no error
 
 
+def test_source_roundtrip_and_find():
+    root = _repo()
+    t = tracker.create_task(root, "Sourced", source="plan:x:M1")
+    assert tracker.read_task(root, t["id"])["source"] == "plan:x:M1"
+    assert tracker.find_by_source(root, "plan:x:M1")["id"] == t["id"]
+    assert tracker.find_by_source(root, "nope") is None
+
+
+def test_upsert_idempotent():
+    root = _repo()
+    a = tracker.upsert_task(root, "plan:x:M2", "First title", brief="b1")
+    b = tracker.upsert_task(root, "plan:x:M2", "Updated title", brief="b2")
+    assert a["_created"] is True and b["_created"] is False and b["id"] == a["id"]
+    assert len(tracker.list_tasks(root)) == 1        # no duplicate
+    assert tracker.read_task(root, a["id"])["title"] == "Updated title"
+
+
 TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
 
 

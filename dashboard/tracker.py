@@ -32,7 +32,7 @@ TRANSITIONS: dict[str, set[str]] = {
 AGENT_TERMINAL = "review"  # agents may advance to `review`, never close to `done`
 
 SECTION_ORDER = ("Brief", "Acceptance", "Runs", "Updates")
-FRONTMATTER_ORDER = ("id", "title", "type", "status", "assignee", "scoped_dir",
+FRONTMATTER_ORDER = ("id", "source", "title", "type", "status", "assignee", "scoped_dir",
                      "created", "updated")
 _EDITABLE = {"title", "type", "assignee", "scoped_dir", "brief", "acceptance"}
 
@@ -96,7 +96,8 @@ def _parse(text: str) -> dict:
 
     acceptance = [re.sub(r"^\[.\]\s*", "", a) for a in _items("Acceptance")]
     return {
-        "id": fm.get("id", ""), "title": fm.get("title", ""),
+        "id": fm.get("id", ""), "source": fm.get("source", ""),
+        "title": fm.get("title", ""),
         "type": fm.get("type", "task"), "status": fm.get("status", "backlog"),
         "assignee": fm.get("assignee", ""), "scoped_dir": fm.get("scoped_dir", "."),
         "created": fm.get("created", ""), "updated": fm.get("updated", ""),
@@ -160,10 +161,10 @@ def read_task(root: Path, task_id: str) -> dict | None:
 
 def create_task(root: Path, title: str, type: str = "task", brief: str = "",
                 acceptance: list[str] | None = None, assignee: str = "",
-                scoped_dir: str = ".") -> dict:
+                scoped_dir: str = ".", source: str = "") -> dict:
     now = _now_iso()
     task = {
-        "id": _new_id(), "title": title, "type": type, "status": "backlog",
+        "id": _new_id(), "source": source, "title": title, "type": type, "status": "backlog",
         "assignee": assignee, "scoped_dir": scoped_dir, "created": now, "updated": now,
         "brief": brief, "acceptance": list(acceptance or []), "runs": [],
         "updates": [f"{now} · created"],
@@ -222,3 +223,29 @@ def link_run(root: Path, task_id: str, run_id: str, result: str | None = None) -
         f"{now} · result ({run_id}): {result}" if result else f"{now} · run linked: {run_id}")
     task["updated"] = now
     _write(root, task)
+
+
+def find_by_source(root: Path, source: str) -> dict | None:
+    if not source:
+        return None
+    for t in list_tasks(root):
+        if t.get("source") == source:
+            return t
+    return None
+
+
+def upsert_task(root: Path, source: str, title: str, **fields) -> dict:
+    """Idempotent create-or-update keyed by `source` (e.g. 'plan:brain:T6'). Re-running a workflow
+    phase updates the existing task's editable fields instead of duplicating."""
+    existing = find_by_source(root, source)
+    if existing:
+        upd = {k: v for k, v in fields.items() if k in _EDITABLE}
+        if title and title != existing["title"]:
+            upd["title"] = title
+        t = update_task(root, existing["id"], **upd) if upd else existing
+        return {**t, "_created": False}
+    t = create_task(root, title, source=source,
+                    type=fields.get("type", "task"), brief=fields.get("brief", ""),
+                    acceptance=fields.get("acceptance"), assignee=fields.get("assignee", ""),
+                    scoped_dir=fields.get("scoped_dir", "."))
+    return {**t, "_created": True}
