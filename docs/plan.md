@@ -871,3 +871,289 @@ The dashboard is complete and hardened (127.0.0.1-only, token, persona allowlist
    Glob widely ($0.16/run). Scope spawns to a chosen project dir.
 3. Consider a **per-run timeout** and confirm the concurrency cap suits real workloads.
 Until then it's verified for local experimentation. (User undecided on real use as of 2026-07-26.)
+
+---
+
+# Plan — Project & Task Tracker (fleet-driven)
+Date: 2026-07-26
+Status: Draft
+Brainstorm: docs/brainstorm.md ("Project & Task Tracker (fleet-driven)", 2026-07-26)
+
+## Overview
+Evolve the dashboard from *observing* project state to *owning* it: a personal, self-hosted,
+GitLab-style tracker where **a task is a persistent, stateful fleet run**. Projects → tasks/issues
+with real status, an append-only update history, and a fleet that pulls and delivers the work.
+Builds directly on the completed dashboard (D1–D9): the run registry, process manager (D4), run
+approval (D8), and task queue (D9). It closes brain's own loop — `/plan` produces milestones →
+those seed tasks → the fleet works them → results flow back as updates → the pipeline board
+reflects progress.
+
+## Goals & Success Criteria
+- **G1 — Track work statefully.** Projects, tasks/issues with status, assignee, and an append-only
+  update log, all in the dashboard.
+- **G2 — Fleet delivers tasks.** "Work this task" spawns a scoped, approved fleet run linked to the
+  task; on finish the task auto-updates and moves to `review` (never auto-closed).
+- **G3 — Modular change tracking.** Every status change, comment, and run-link is an event in the
+  task's history (the activity feed).
+- **G4 — Composes with what exists.** Tasks nest under the pipeline board (project phase = top
+  lens, tasks = drill-down); reuses registry/PM/approval/queue.
+- **Success =** create a task, assign it to a persona, click "work," watch the run execute
+  (writes gated by approval + scoped dir), and see the task move to `review` with the run linked
+  and a summary in its update log.
+
+## Scope
+### In Scope (v1 = T1–T5)
+- SQLite tables (extend the dashboard DB): `projects`, `tasks`, `task_updates`; task↔run links.
+- Task/project CRUD API (token-guarded) + a Kanban/issue board + task detail with update log in `web/`.
+- "Work a task" → a scoped D4/D8 run linked to the task; result → update + `review`.
+### Out of Scope (v1)
+- Backlog auto-pull (v2, T6), planner persona (v3, T8), GitHub issue/PR sync (T7, opt-in later).
+- Labels, milestones, subtasks, comment threads, custom fields (add after the lean core).
+- Multi-user, auth beyond the existing local token, external hosting.
+
+## Tech Stack & Architecture
+
+### Decisions (carried from brainstorm)
+| Question | Choice | Why |
+|----------|--------|-----|
+| Backing store | **Local SQLite, same DB as the run registry** (`~/.claude/brain-dashboard/runs.db`, new tables) | Task↔run links are the core value → one DB = trivial joins; fast cross-project queries; private/offline. GitHub sync deferred to opt-in. |
+| Change history | **Append-only `task_updates` log** | Modular change tracking + activity feed without needing git versioning. |
+| Fleet autonomy | **Phased: assign (v1) → backlog-pull (v2) → planner (v3)** | Ships a controllable core; "team" feel arrives at v2 on a solid base. |
+| Model | **Lean single `Task` entity (type: task\|issue\|bug)** | Covers projects/tasks/issues/state without labels/milestones/threads. |
+| Backend | **Extend `dashboard/` (FastAPI)** — new `dashboard/tracker.py` + endpoints | Reuse token/guard/hub/registry/PM; one server. |
+| Frontend | **Extend `web/` vanilla JS** — new board view + task detail | Consistent with the dashboard; no build step. |
+
+### Data model (lean core)
+```
+projects      (id, name, root_path)                      -- seeded from the pipeline detector / projects.json
+tasks         (id, project_id, type[task|issue|bug], title, brief, acceptance,
+               status[backlog|ready|doing|review|done], assignee, scoped_dir,
+               created_at, updated_at)
+task_updates  (id, task_id, ts, kind[created|status|comment|run_linked|result], data)
+runs          (+ nullable task_id)                        -- links a fleet run to the task it worked
+```
+A task's runs = `SELECT * FROM runs WHERE task_id = ?`. Status machine: agents may move a task to
+`review`, **never** to `done` (a human or the Reviewer persona closes it).
+
+### Fleet linkage
+"Work a task" = a normal process-manager run tagged with `task_id`, persona = assignee, `--add-dir`
+= the task's `scoped_dir` (validated under `~/Desktop/Code`), prompt = the task brief + acceptance.
+On run finish, a tracker hook appends a `result` update and sets status → `review`. Writers still
+pass through D8 approval; read-only assignees auto-run. v2 pull respects that gate.
+
+## Milestones
+| # | Milestone | Description | Dependencies |
+|---|-----------|-------------|--------------|
+| T1 | Schema + tracker module | `projects`/`tasks`/`task_updates` tables + nullable `runs.task_id`; `tracker.py` CRUD; seed projects from the pipeline detector | dashboard D6 |
+| T2 | Task API | Token-guarded REST: projects list; tasks CRUD; task detail; `/api/tasks/{id}/updates` (add comment / status) | T1 |
+| T3 | Board UI | Kanban by status (per-project filter) in `web/`, task create/edit, task detail + update log; reuse pipeline-board CSS | T1, T2 |
+| T4 | Work-a-task (assign→run) | `POST /api/tasks/{id}/work` → scoped D4/D8 run (assignee persona, task dir, brief prompt); link run↔task; status→`doing` | T2, D4/D8 |
+| T5 | Result → review | On run finish, append a `result` update + move status→`review` (never auto-close); optional Reviewer auto-check | T4 |
+| T6 | Backlog pull (v2) | `ready` tasks auto-flow into the D9 queue as capacity frees; writers still gated by approval | T4, D9 |
+| T7 | Seed + git links (opt-in) | Parse `/plan` milestone tables → tasks; per-repo GitHub issue/PR sync via the MCP | T2 |
+| T8 | Planner persona (v3, deferred) | Decompose a deliverable into tasks and dispatch workers | T6 |
+
+**Phasing:** v1 = **T1–T5** (the shippable slice: tracker + board + assign + run-linking). v2 = T6. Later = T7/T8.
+
+## Risks & Mitigations
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|-----------|
+| Task→prompt quality drives deliverable quality | High | High | Explicit `brief` + `acceptance` fields; template the run prompt; don't spawn off a bare title |
+| Agents auto-closing unverified work | Med | High | Status machine forbids agent→`done`; agents only reach `review`; human/Reviewer closes |
+| State-ownership conflicts (you + agent mutate a task) | Med | Med | Append-only log is the truth; single-user → last-write-wins on status is acceptable |
+| Per-task write confinement | Med | High | `scoped_dir` must resolve under `~/Desktop/Code`; reuse D8 `--add-dir` + approval; reject escapes |
+| Scope creep into a full Linear/GitLab | High | Med | Hard phasing; v1 is T1–T5 only; richness (labels/milestones) explicitly deferred |
+| Schema migration on the live registry DB | Low | Med | Additive only (new tables + nullable column); `CREATE TABLE IF NOT EXISTS` |
+
+## Dependencies
+- **Reuses:** `dashboard/registry.py` (SQLite), `process_manager.py` (D4/D8 spawn+approval), D9 queue,
+  the pipeline detector (`data.read_pipeline`), the token/guard/hub in `server.py`, `web/` board CSS.
+- **New:** `dashboard/tracker.py`, tracker endpoints in `server.py`, a board view in `web/`.
+- **Opt-in later:** GitHub MCP (already available) for T7 issue/PR sync.
+
+## Open Questions
+1. **Status lifecycle** — exact transitions and which are agent- vs user-driven (esp. does T5 auto-move to `review`, and does the Reviewer persona auto-review or just you?).
+2. **Per-task scoped dir** — default to the project root, or a per-task subdir / branch?
+3. **Seeding format (T7)** — how milestone tables in `docs/plan.md` map to tasks (parse the `| # | Milestone |` table, or a marker?).
+4. **Projects source** — a `projects` table seeded once, or computed live from the pipeline detector each read?
+
+## Decisions Log
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Backing store | SQLite, same DB as the run registry | Task↔run joins; fast; private; GitHub deferred | 2026-07-26 |
+| Change history | Append-only `task_updates` | Modular change tracking without git versioning | 2026-07-26 |
+| Fleet autonomy | Phased: assign → pull → planner | Controllable core first; team-feel at v2 | 2026-07-26 |
+| Model | Lean single `Task` (type field) | Covers tasks/issues/bugs without heavy richness | 2026-07-26 |
+| Home | Extend `dashboard/` + `web/` | Reuse registry/PM/approval/queue/token/hub | 2026-07-26 |
+| Completion | Agents reach `review`, never `done` | A human/Reviewer verifies deliverables | 2026-07-26 |
+
+## Handoff Readiness (for /scaffold)
+- Tech decided: ✅ SQLite tables in the dashboard DB + `dashboard/tracker.py` + FastAPI endpoints + vanilla-JS board.
+- Structure clear: ✅ new `tracker.py`, tracker routes in `server.py`, board view in `web/`; links via `runs.task_id`.
+- Entry points: ✅ `/api/tasks*` + `/api/projects` + `/api/tasks/{id}/work`; the board view; `tracker.py` CRUD.
+- **v1 slice = T1–T5.** Open Questions 1–2 (status lifecycle, scoped dir) are the ones to pin before T4/T5; T1–T3 can start now.
+
+---
+
+## Task Tracker — Revision: cross-device state (2026-07-26)
+**Requirement added:** state must travel when the code is pulled on another device.
+
+**Conflict surfaced:** the prior decision (SQLite at `~/.claude/brain-dashboard/runs.db`) lives in
+the *home dir*, not the repo → it does NOT travel. **Backing-store decision revised.**
+
+### Revised backing store: git-versioned files, per repo
+- **Source of truth = `.brain/tasks/<id>.md` in each project repo** — YAML frontmatter (type, title,
+  status, assignee, scoped_dir, brief, acceptance, linked run ids) + an append-only `## Updates`
+  section. Committed with the code → travels with `git pull`. One file per task (small, mergeable).
+- The dashboard **reads/writes these files directly** (as the pipeline detector already reads
+  `docs/`). Cross-project view = scan each known repo's `.brain/tasks/` (bounded).
+- **Run registry stays** (device-local run telemetry). A task file records run ids + the durable
+  *result* of a run, so the outcome travels even though the ephemeral telemetry doesn't.
+- **Change history = the in-file update log + `git diff`/`git log`** — strengthens the "modular
+  change tracking" goal.
+- More brain-native (mirrors `docs/` + append-only `updates/queue.md`).
+
+### Trade-offs accepted
+- No SQL joins / weaker cross-project queries (repo scan instead) — fine for the lean v1.
+- Concurrency handled by git; file-per-task keeps merges small.
+- State changes must be committed to travel — dashboard writes files, user commits (auto-commit
+  deferred).
+
+### Alternative (if "central, not per-repo" is wanted): GitHub Projects/Issues via MCP, or a hosted
+DB. Cross-device too, but service-coupled + repo-per-project. Not chosen — user phrasing implies
+per-repo, git-carried state.
+
+### Milestone impact
+- **T1 changes:** not SQLite tables — instead a **task file format** (`.brain/tasks/*.md`) + a
+  `tracker.py` that reads/writes them per repo; `runs.task_id` link → task file references run ids.
+- T2/T3/T4/T5 operate on files instead of DB rows (API + board + work-a-task + result→review
+  unchanged in shape). T7 GitHub sync becomes a natural extension of the same model.
+
+### Decisions Log (revision)
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Backing store (revised) | **git-versioned `.brain/tasks/*.md` per repo** | Must travel with `git pull`; SQLite-in-home doesn't. More brain-native; git = change history | 2026-07-26 |
+| Run registry role | Stays device-local; task file records run ids + durable result | Telemetry is per-device; outcomes must travel | 2026-07-26 |
+| Commit model | Dashboard writes files; user commits (auto-commit deferred) | Keep git flow explicit; avoid noisy auto-commits | 2026-07-26 |
+
+### New open question
+- **Sync ergonomics:** manual `git commit/push` of task changes for v1, or a dashboard "sync"
+  button that commits+pushes the `.brain/tasks/` changes? (Leaning manual for v1.)
+
+---
+
+## T1 — Deep Dive: task file format + `tracker.py`
+Date: 2026-07-26 · Depth: deep (the contract the whole tracker builds on)
+
+### File layout (per repo)
+```
+<project-repo>/.brain/tasks/<id>-<slug>.md     # one file per task; committed (travels with git)
+```
+- `.brain/tasks/` is **committed** (the point of cross-device). Created lazily on first task.
+- One file per task ⇒ creates never conflict; edits to different tasks never conflict.
+
+### Task file format
+Scalar-only YAML frontmatter (stdlib-parseable — **no YAML dep**) + markdown body sections.
+List-ish data (acceptance, runs, updates) lives in **body sections**, keeping frontmatter trivial
+and the whole file human-readable / git-diffable.
+```markdown
+---
+id: 9f3a2b
+title: Fix login redirect loop
+type: task            # task | issue | bug
+status: doing         # backlog | ready | doing | review | done
+assignee: builder     # persona name, or empty
+scoped_dir: .         # relative to repo root; write-runs confined here (must stay in-repo)
+created: 2026-07-26T14:03:00Z
+updated: 2026-07-26T14:35:00Z
+---
+
+## Brief
+Fix the redirect loop after login. Context: the guard re-fires on the callback route…
+
+## Acceptance
+- [ ] no loop on login
+- [ ] session persists across refresh
+
+## Runs
+- r_abc123
+
+## Updates
+- 2026-07-26T14:03Z · created
+- 2026-07-26T14:20Z · status: backlog → doing
+- 2026-07-26T14:35Z · result (r_abc123): patched the redirect guard; tests pass
+```
+- **Brief + Acceptance are first-class** (mitigates the "task→prompt quality" risk — the run prompt
+  = Brief + Acceptance, never a bare title).
+- **Updates = append-only log**; each line `<iso-utc> · <kind>: <detail>`. Change history = this log
+  **+ `git log`/`git diff`**.
+- **Runs** = local-registry run ids that worked this task; the durable *result* is written into
+  Updates (so the outcome travels even though run telemetry stays device-local).
+
+### IDs & filenames
+- `id = secrets.token_hex(3)` (6 hex chars) — **collision-free across devices without a server**.
+- Filename `<id>-<slug>.md`; slug = kebab of title, truncated. Reference a task as `#<id>`.
+- **Decision to confirm:** random ids over GitLab-style sequential `#12` — sequential numbers
+  collide when two devices create tasks offline (no central assigner). Random trades readability
+  of a running number for merge-safety. (The slug keeps filenames human-readable.)
+
+### `dashboard/tracker.py` — read/write API (stdlib only)
+Pure functions over the filesystem (testable without a server); reuses `data._project_roots()`
+for project discovery.
+```python
+TASKS_SUBDIR = ".brain/tasks"
+STATUSES = ["backlog", "ready", "doing", "review", "done"]
+
+def all_tasks() -> list[dict]                 # cross-project: scan every project root, tag w/ project
+def list_tasks(root: Path) -> list[dict]      # one repo
+def read_task(root, task_id) -> dict | None
+def create_task(root, title, type="task", brief="", acceptance=None,
+                assignee="", scoped_dir=".") -> dict
+def update_task(root, task_id, **fields) -> dict          # set frontmatter fields; bumps `updated`
+def set_status(root, task_id, new_status, actor, note="") -> dict   # validated transition + log
+def add_update(root, task_id, kind, detail) -> None       # append a line to ## Updates
+def link_run(root, task_id, run_id, result=None) -> None  # add to ## Runs + append a result update
+```
+- **Parsing:** frontmatter (scalars, stdlib) + body split on `## <Section>` headers. A task is a
+  canonical dict; writing **re-serializes deterministically** (fixed field/section order, updates
+  preserved+appended) ⇒ localized, clean git diffs.
+- **Serialization is idempotent:** read→write with no change produces a byte-identical file (a T1
+  test asserts this — guarantees stable diffs).
+
+### Status machine (validated in `set_status`)
+```
+backlog ⇄ ready → doing → review → done
+                    ▲        │
+                    └── rework ┘        (review → doing)
+any → backlog (park)
+```
+- **Agents may only reach `review`** — `set_status(actor="agent", new_status="done")` is rejected.
+  A human or the Reviewer persona closes (`actor="user"`). This is enforced here, the single choke
+  point.
+
+### Cross-project aggregation
+`all_tasks()` iterates `data._project_roots()` (already used by the pipeline board), reads each
+repo's `.brain/tasks/`, and tags each task with `{project, root}`. Bounded (few repos × few tasks).
+A project with no `.brain/tasks/` simply contributes none.
+
+### Acceptance criteria (T1 done when…)
+- [ ] Format documented; `create_task` writes a valid `.brain/tasks/<id>-<slug>.md`.
+- [ ] Round-trip: create → read_task returns the same dict; **re-serialize is byte-idempotent**.
+- [ ] `set_status` enforces the transition graph **and** rejects agent→`done`.
+- [ ] `add_update`/`link_run` append to the log; `updated` bumps.
+- [ ] `all_tasks()` aggregates across ≥2 repos; missing tracker dir = empty, no error.
+- [ ] Verified by unit tests over a temp repo dir — **no server, no git, no network**.
+
+### Files this milestone creates
+- `dashboard/tracker.py` (the module above).
+- (docs) a short `.brain/README.md` template explaining the format, dropped into a repo on first use.
+- No endpoints/UI yet (those are T2/T3).
+
+### Open items rolled to T2+ (not needed for T1)
+- Endpoints (`/api/tasks`, `/api/projects`, `/api/tasks/{id}/work`) → T2/T4.
+- Board rendering → T3. Sync/commit ergonomics → cross-device revision note.
+
+### T1 decision confirmed (2026-07-26)
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Task IDs | **Random short id** (`secrets.token_hex(3)`, ref `#9f3a2b`) | Collision-free across offline devices (no central assigner); slug keeps filenames readable | 2026-07-26 |
