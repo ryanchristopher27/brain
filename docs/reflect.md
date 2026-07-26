@@ -213,3 +213,82 @@ Phase context: /build ×7 across two prior /reflect checkpoints
 
 ## Suggested Next Phase
 **/build A4** — finish the fleet, then a real-mic pass to validate the one untested surface.
+
+---
+
+# Reflect — Agent Dashboard (D1–D9 + /design polish)
+Date: 2026-07-26
+Type: Milestone (Pillar C v2 complete — full local agent control plane)
+Phase context: /plan → /brainstorm → /scaffold(inline) → /fleet(recon) → /build ×9 → /design polish
+
+## Accomplished
+- Shipped the entire agent dashboard: **Observe** (D1 server+security, D2 shell+orb, D3
+  roster/jobs/health, D7 pipeline board) + **Control** (D6 SQLite registry, D4 process manager,
+  D8 run-level approval, D5 controls+activity/cost, D9 task queue).
+- A working local control plane: spawn read-only runs, propose→approve→confine *write* runs,
+  stop, queue, with live activity + cost, all behind a Host/Origin/token boundary + audit log.
+- A `/design polish` pass on `web/` (focus rings, de-emoji, flatten nested cards, section
+  headers, mono data, touch/contrast) — detector clean.
+
+## What Worked
+- **/fleet as recon, not swarm.** Correctly refused to fan out parallel Builders on
+  shared-surface sequential work; used the fleet for parallel *read-only* recon (Scout design +
+  Reviewer threat-model) that de-risked all of Phase 2. Honest application of our own rule.
+- **Probe-before-build kept catching real issues before they shipped:** `--permission-prompt-tool`
+  doesn't exist (killed D8-as-planned → run-level-approval pivot); `--allowed-tools` does NOT
+  confine a persona with broader frontmatter (would've been a security hole); `--add-dir` DOES
+  confine (escape denied — verified the safety guarantee); minimal-env broke `claude` auth.
+- **Reviewer threat-model → hardened endpoint contract**, built straight into D4 (persona
+  allowlist, task-as-argv, add-dir confinement, token, audit, kill-group). Security by design.
+- **The detector earned its keep** in polish — flagged the side-tab earlier, and the polish
+  surfaced real bans (emoji icons, nested cards, repeated eyebrows, missing focus rings).
+
+## What Didn't Work
+- **My verification harness had more bugs than the code.** macOS has no `timeout` (empty probe
+  read as a false failure); a tokenless `/api/health` check hit the new auth guard → JSONDecode
+  false alarm; TestClient sends `Host: testserver` → false ws rejection; per-file `node --check`
+  missed a cross-script `const el` collision. Each looked like a product failure but was the test.
+- **Server-restart friction:** every backend edit needed a manual kill+nohup dance; background
+  servers got reaped; stale port-holders lingered. No dev hot-reload.
+- **Spawn cost:** one Scout run hit $0.16 because its cwd was the whole `~/Desktop/Code` (broad
+  Glob exploration). Cost tracking earned its keep and flagged that spawns want a narrower cwd.
+
+## Decisions Reviewed
+- **D8 run-level (not per-action) approval:** forced by reality; simpler *and* safe given
+  `--add-dir` confinement is real. Held up.
+- **Dashboard subscribes to voice (not invert):** kept the working voice loop untouched. Right.
+- **Inherit env for read-only, filter secrets for writers:** reasoned via "read-only personas
+  have no tool to read env." Pragmatic, sound.
+- **Recency-based pipeline column** (deviated from locked most-advanced-wins): a testing-driven
+  improvement — brain shows in `plan`/build, not a stale `reflect`.
+- **System font over Fira CDN** for a local tool: avoid a network dependency; mono carries the
+  terminal character.
+
+## Surprises
+- `--allowed-tools Write` did not stop `builder` from running Bash — persona frontmatter wins;
+  tool-narrowing is not a sandbox.
+- `--add-dir` genuinely confines writes (escape to /tmp denied even under `acceptEdits`).
+
+## Lessons Learned
+- **When a check fails on a simple, already-working code path, suspect the check first.** Several
+  iterations were lost to harness bugs (missing `timeout`, tokenless health call, TestClient
+  host). Verify the verifier.
+- **Per-file syntax checks miss cross-file global collisions.** For multi-script classic JS, use a
+  combined-scope check (`cat a.js b.js | node --check`).
+- **Verify security *mechanisms* empirically, never by assumption** — the `--allowed-tools` and
+  `--add-dir` behaviors were the opposite/confirmation of what docs implied; both were probed.
+
+## Memory Updates
+- Project memory kept current through D9 + polish (verified CLI security facts persisted).
+- Extend the hardware-free-verification feedback memory with: (a) the combined-scope JS check,
+  (b) "suspect the check first" heuristic, (c) TestClient host quirk / real-server verification.
+
+## Next Steps
+1. **Commit** the Phase 2 + polish work (11 uncommitted files) — overdue.
+2. **Visual feedback** on the polished dashboard (still pending the user's eyes).
+3. Optional: a dedicated **/review** or security pass before real use of the action endpoints;
+   narrow the dashboard-spawn default cwd; add dev hot-reload.
+
+## Suggested Next Phase
+**Commit, then your visual review.** The build is verified and the detector is clean — the
+natural close is locking it in, then a real look at the running dashboard.

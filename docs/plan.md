@@ -657,3 +657,217 @@ most-advanced/progress info. `.brain-phase` file override still supported. Proje
 **Phase 1 COMPLETE:** D1 (server+security+proxy) · D2 (dashboard shell + orb tile) · D3
 (agents/jobs/schedule/health panels) · D7 (pipeline board). Remaining (optional, later): D4/D5
 (actions + controls), D8 (run-level approval), D6 (SQLite registry), D9 (queue).
+
+---
+
+## Agent Dashboard — Phase 2 Fleet Recon (D4/D6/D8)
+Date: 2026-07-26
+Source: /fleet (Scout design · Reviewer threat-model · direct CLI probe)
+
+### 🔴 Key probed finding — tool-narrowing is unreliable
+- `claude -p --permission-mode acceptEdits --add-dir <dir>` **writes within scope headless, no
+  prompt, no denials** → D8 scoped-run + run-level approval is VIABLE.
+- `--agent builder --allowed-tools Write` **did NOT confine** the builder — it still ran Bash.
+  So **do not rely on `--allowed-tools` to sandbox a persona whose frontmatter has more tools.**
+  Confinement model: (a) read-only runs → a read-only persona (scout/operator, frontmatter-
+  enforced, verified); (b) write runs → `--add-dir` + `acceptEdits` + **human approval (D8)** +
+  audit, NOT tool-narrowing. TODO before shipping write-runs: test `--add-dir` path-escape.
+
+### D6 registry (SQLite, `~/.claude/brain-dashboard/runs.db`, WAL)
+- `runs`(id, persona, task, source[voice|background|dashboard], status[running|done|error],
+  started_at, ended_at, cost_usd, input_tok, output_tok, report_path, pid) + `events`(run_id, ts,
+  kind, data) for the activity feed.
+- Writers: dashboard PM (Python direct) · `runner.sh` (via stdlib `registry_append.py`, no-op if
+  db absent) · voice daemon (via a client; needs cost extraction — the bridge currently discards
+  `result.total_cost_usd`/`usage`, add a `cost` event in `voice/bridge/claude.py`).
+
+### D4 process manager (`dashboard/process_manager.py`)
+- `asyncio.create_subprocess_exec` (NOT the sync `ClaudeBridge`); track by run_id→proc; `_drain`
+  streams stream-json → hub (live) + registry events; stop via SIGTERM to the process group.
+
+### Security contract (D4/D8 action endpoints — Reviewer) — all under `/api/`, token-guarded
+- persona MUST be in a known-agent allowlist (loaded from `agents/personas/`)
+- `task` passed as an argv positional, **never** `shell=True`
+- `--add-dir` resolved and asserted under a fixed base (`~/Desktop/Code`), reject escapes → 400
+- `MAX_CONCURRENT` cap → 429; per-run timeout; `start_new_session` for kill-group
+- run IDs = `secrets.token_urlsafe(16)`; D8 approve/deny hold the run `pending`, spawn only on approve
+- append-only `audit.jsonl` on spawn/stop/approve/deny; never log full argv/secrets; minimal `env`
+- (verified) the existing `guard` middleware already covers action POSTs since they're under `/api/`
+
+### Build order (sequential): D6 → D4 → D8 → D5 (visual checkpoint) → D9
+
+---
+
+# Plan — Graphify Integration (Knowledge-Graph Context for the LLM)
+
+Date: 2026-07-26
+Status: Draft
+Brainstorm: `docs/brainstorm.md` → "Graphify Integration" section (2026-07-26)
+
+## Overview
+
+Adopt `safishamsi/graphify` to give the LLM a persistent, **queryable** knowledge graph of
+your repositories, so Claude stops re-deriving structure every session. The core finding from
+brainstorm holds: **this is adopt, not build** — graphify already ships the LLM-facing surface
+(an MCP server exposing `query_graph`/`get_neighbors`/`shortest_path`, a Claude Code skill, and
+pre-tool-use hooks that push the assistant to query the graph before reading files).
+
+Because the value is unproven until watched running, this plan is **gated and phased**:
+
+- **Phase 0 — Pilot (the gate).** Install, graph one code repo (free/local), live with the
+  MCP-query workflow. Decide whether it earns further investment. *No brain code written here.*
+- **Phase 1 — Brain wiring (contingent on Phase 0).** A thin `/graph` command, `install.sh`
+  registration, a `graphify-out/` convention + gitignore policy, and a freshness policy for
+  code repos.
+- **Phase 2 — Vault track (contingent + deferred).** On-demand graphing of the plain-markdown
+  vault, with cost guardrails. `--obsidian` noted as a future output target only.
+
+The cost/privacy split is the design spine: **code = free + 100% local** (bundled tree-sitter);
+**vault = LLM-cost** (prose extraction hits the API and sends semantic descriptions out).
+
+## Goals & Success Criteria
+
+- **G1 — LLM context injection.** Claude can pull the relevant graph neighborhood on demand
+  rather than re-exploring. Success = in real sessions, Claude *actually* queries the graph via
+  MCP before blind file reads (observed, not assumed).
+- **G2 — Prove value before wiring.** A recorded go/no-go after living with the pilot.
+- **G3 — Respect the cost/privacy split.** Code graphed freely; vault graphed only deliberately.
+- **G4 — Brain-native only if earned.** If wired, it follows brain conventions (command +
+  `install.sh` sync, degrade-gracefully).
+
+Success criteria (checkboxes ticked as met):
+- [ ] **SC1** — graphify installed; `/graphify .` produces `graphify-out/graph.json` on the pilot repo.
+- [ ] **SC2** — MCP server reachable; `query_graph`/`get_neighbors` return real results on the pilot graph.
+- [ ] **SC3** — Over a pilot window (~1 week / several real sessions), a recorded observation of
+  whether Claude uses graph queries and whether answers improved; plus whether the global
+  pre-tool-use hook is helpful or noisy.
+- [ ] **SC4** — Explicit go/no-go decision logged (proceed to Phase 1, or stop at plain-adopt).
+- [ ] **SC5 (Phase 1, if go)** — `/graph` wrapper + `install.sh` registration + `graphify-out/`
+  gitignore convention + code-repo freshness policy live and verified.
+- [ ] **SC6 (Phase 2, if pursued)** — vault graphed on-demand with cost surfaced; no automatic
+  vault re-graphing.
+
+## Scope
+
+### In Scope
+- Installing graphify (`uv tool install graphifyy`; `graphify install`).
+- Piloting on **one** code repo; evaluating the MCP-query workflow and the global hook.
+- **Contingent:** thin brain wrapper (`/graph`), `install.sh` registration, `graphify-out/`
+  git policy, code-repo freshness automation.
+- **Contingent/deferred:** vault track with cost guardrails.
+
+### Out of Scope
+- Building any graph tooling from scratch (graphify provides it).
+- Converting the vault to Obsidian (future; `--obsidian` is only noted).
+- Neo4j / graphml / wiki exports; cross-repo merged graphs; `get_pr_impact`/PR flows.
+- Cursor wiring (unless trivially free) — Claude Code first.
+
+## Tech Stack & Architecture
+
+- **graphify** (Python 3.10+, installed via `uv`/`pipx`) — the engine. Tree-sitter bundled;
+  no external binaries for code extraction.
+- **graphify MCP stdio server** — the LLM-facing query layer (the actual "context injection"
+  mechanism; query-on-demand, *not* a static blob pasted into `CLAUDE.md`).
+- **Brain plumbing (Phase 1 only)** — a `/graph` command in brain's command set + an
+  `install.sh` addition, mirroring the frontend-domain "wire external tool, degrade gracefully,
+  sync via install.sh" recipe. Freshness via brain's existing hook pattern (git-driven, **not**
+  per-edit for the vault).
+
+**Architecture note / significant decision (needs confirmation):** graphify is *cross-cutting*
+— it applies to any repo regardless of type — so it fits brain's **universal (L1)** layer as a
+command + install step, **not** an L2 `domains/` entry (domains are contextual by project type).
+This differs from the frontend work, which was correctly a domain. Recommendation: universal
+command + `install.sh`. Flagged in Open Questions for your call.
+
+## Milestones
+
+| # | Milestone | Description | Dependencies | Gate |
+|---|-----------|-------------|--------------|------|
+| M0 | Install & first graph | `uv tool install graphifyy`; `graphify install`; `/graphify .` on the pilot repo; confirm `graph.json` + MCP reachable | none | — |
+| M1 | Live pilot & evaluate | Use across several real sessions; observe graph usage, answer quality, hook noise, cost | M0 | **GO/NO-GO** |
+| M2 | Brain wiring | `/graph` wrapper, `install.sh` registration, `graphify-out/` gitignore convention, code-repo freshness policy | M1 = GO | — |
+| M3 | Vault track (deferred) | On-demand vault graphing with cost guardrails; `--obsidian` deferred | M2 + explicit opt-in | — |
+
+## Task Breakdown (light — Phase 0 only; deeper on request)
+
+**M0 — Install & first graph**
+- Install graphify; run `graphify install`; confirm the skill landed and MCP config registered.
+- Pick the pilot repo (see Open Questions); run `/graphify .`; confirm `graphify-out/graph.json`
+  and `GRAPH_REPORT.md` generated.
+- Add `graphify-out/` to that repo's `.gitignore` for the pilot (simplest; revisit committing
+  `graph.json` later).
+- Sanity-check MCP: `query_graph`/`get_neighbors` on a known symbol.
+
+**M1 — Live pilot & evaluate**
+- Use the repo normally in Claude Code for the pilot window.
+- Keep a short note (in this doc's Decisions Log or a scratch file): did Claude query the graph?
+  did answers improve? was the global hook helpful or noisy across *other* repos? any cost surprises?
+- Record the **GO/NO-GO** in the Decisions Log → drives whether M2 happens.
+
+*(M2/M3 task breakdown intentionally deferred until the pilot returns GO — planning them now
+would be planning around an unproven tool.)*
+
+## Risks & Mitigations
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| Global pre-tool-use hook is noisy across all sessions | Med | Med | Pilot explicitly evaluates this (SC3); scope or disable the hook if it annoys |
+| Vault graphing runs up API cost | Med | Med | Vault deferred to Phase 2, on-demand only, never auto; `cost.json` watched |
+| `graph.json` goes stale / misleads | Med | Med | Incremental `--update`; freshness policy in M2; graph is queried not trusted blindly (confidence tags) |
+| Committing `graphify-out/` bloats repos / leaks `cost.json` | Low | Low | Gitignore the dir in the pilot; decide `graph.json`-only commit later |
+| Tool immaturity / breaking changes (new tool) | Med | Low | Pilot-first limits blast radius; plain-adopt fallback needs zero brain code |
+| Planning wiring around unverified behavior | Med | Med | Gated phases — M2 blocked on M1 = GO (the recurring "stress-test against reality" discipline) |
+
+## Dependencies
+
+- `uv` (or `pipx`) + Python 3.10+ on the machine.
+- A pilot code repo (named at M0).
+- For any headless `graphify extract` later: an API key (`ANTHROPIC_API_KEY` etc.). In-session
+  `/graphify .` needs none — uses the existing model session.
+
+## Open Questions
+
+Recommendations given; **bold = wants your confirmation before it hardens**:
+1. **Pilot-first vs. wire now?** → Rec: **pilot-first** (this plan assumes it).
+2. **Defer vault to Phase 2?** → Rec: **yes** (paid track; prove value on free code first).
+3. **Which pilot repo?** → *Needs your pick.* Suggest a mid-size, actively-worked code repo
+   (not brain itself, not the vault) so the graph is meaningful but the blast radius is small.
+4. **Integration home (L1 universal command vs L2 domain)?** → Rec: **universal command +
+   `install.sh`** (graphify is cross-cutting, not project-type-specific). *Confirm.*
+5. **Freshness mechanism?** → Rec: manual `--update` during pilot; **git `post-commit` on code
+   repos** in M2; never per-edit on the vault.
+6. **`graphify-out/` git policy?** → Rec: **gitignore the whole dir** for the pilot; revisit
+   committing `graph.json` for portability in M2. `cost.json`/`cache/` always ignored.
+7. **Keep the global hook on during the pilot?** → Rec: **yes** — testing the nudge is the whole
+   point of the pilot; scope it only if noisy.
+
+## Decisions Log
+
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Build vs. adopt | Adopt graphify | It already ships the MCP/skill/hook surface; building would duplicate it | 2026-07-26 |
+| Structure | Gated phases (pilot → wire → vault) | Don't plan wiring around an unproven tool; matches brain's stress-test-against-reality pattern | 2026-07-26 |
+| Context mechanism | MCP query-on-demand | Better fit for "tool for the LLM" than a static graph blob in CLAUDE.md; graph.json too big to inject | 2026-07-26 |
+| Vault timing | Deferred to Phase 2 | It's the paid/privacy-exposed track; validate free code repos first | 2026-07-26 |
+| Integration layer | **Provisional:** universal command + install.sh (pending Q4) | Graphify is cross-cutting, not a project-type domain | 2026-07-26 |
+
+## Handoff Notes (for /scaffold)
+
+- **Phase 0 needs no `/scaffold`** — it's install + run commands, no files authored in brain.
+  `/scaffold` becomes relevant only at **M2 (Phase 1)**, and only if the pilot returns GO.
+- Tech stack: decided (graphify; no new stack). Entry point (if wired): a `/graph` command
+  wrapper. Top-level structure: provisionally universal command + `install.sh` (Open Question 4).
+- **Next action is not scaffold — it's the pilot (M0).** Pick the pilot repo (Q3) and run the
+  install.
+
+---
+
+## Agent Dashboard — Before Real Use (flagged 2026-07-26)
+The dashboard is complete and hardened (127.0.0.1-only, token, persona allowlist, task-as-argv,
+`--add-dir` confinement [probe-verified], run-level approval, audit.jsonl, kill-group). But it
+**executes agents from a web UI**, so before relying on the write/action endpoints for real work:
+1. **Dedicated `/review` security pass** on the action endpoints (spawn/propose/approve/stop/queue).
+2. **Narrow the dashboard-spawn default cwd** — currently `~/Desktop/Code`, which let a Scout run
+   Glob widely ($0.16/run). Scope spawns to a chosen project dir.
+3. Consider a **per-run timeout** and confirm the concurrency cap suits real workloads.
+Until then it's verified for local experimentation. (User undecided on real use as of 2026-07-26.)

@@ -32,6 +32,30 @@
       <div id="pipeline" class="board"><p class="empty">loading…</p></div>
     </section>
 
+    <!-- Agent runs: spawn/propose/approve/stop + live activity + cost -->
+    <section class="panel runs-panel">
+      <h2>agent runs <span id="runs-totals" class="count"></span></h2>
+      <div class="run-controls">
+        <select id="run-persona" aria-label="persona"></select>
+        <input id="run-task" type="text" placeholder="task for the agent…" />
+        <input id="run-dir" type="text" placeholder="scoped dir (required for writers)" />
+        <button id="run-go" type="button">run</button>
+        <span id="run-msg" class="run-msg"></span>
+      </div>
+      <div id="queued" class="queued"></div>
+      <div id="pending" class="pending"></div>
+      <div class="runs-cols">
+        <div>
+          <div class="sub">recent runs</div>
+          <div id="runs" class="rows"><p class="empty">no runs yet — spawn one above</p></div>
+        </div>
+        <div>
+          <div class="sub">live activity</div>
+          <div id="activity" class="activity"><p class="empty">no activity yet</p></div>
+        </div>
+      </div>
+    </section>
+
     <section class="panel">
       <h2>agents <span id="agents-count" class="count"></span></h2>
       <div id="agents" class="cards"><p class="empty">loading…</p></div>

@@ -125,18 +125,128 @@ function renderPipeline(p) {
   }));
 }
 
+// ── agent runs (D5): controls · approvals · live activity ────────────────────
+const personaRO = {};
+let controlsReady = false;
+
+async function apiPost(path, body) {
+  const t = await token();
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return { ok: r.ok, status: r.status, data: await r.json().catch(() => ({})) };
+}
+
+function initControls(agents) {
+  if (controlsReady) return;
+  const sel = $("run-persona");
+  agents.forEach((a) => {
+    personaRO[a.name] = a.read_only;
+    const o = el("option", null, a.read_only ? a.name : `${a.name} · writes`);
+    o.value = a.name;
+    sel.append(o);
+  });
+  $("run-go").addEventListener("click", onRun);
+  controlsReady = true;
+}
+
+async function onRun() {
+  const persona = $("run-persona").value;
+  const task = $("run-task").value.trim();
+  const dir = $("run-dir").value.trim();
+  const msg = $("run-msg");
+  if (!task) { msg.textContent = "enter a task"; return; }
+  const writer = personaRO[persona] === false;
+  const res = await apiPost(writer ? "/api/runs/propose" : "/api/runs/spawn",
+    writer ? { persona, task, add_dir: dir } : { persona, task });
+  if (res.ok) {
+    msg.textContent = writer ? "proposed — awaiting approval" : "spawned";
+    $("run-task").value = "";
+    poll();
+  } else {
+    msg.textContent = res.data.error || `error ${res.status}`;
+  }
+}
+
+async function act(path) { await apiPost(path); poll(); }
+
+function renderRuns(d) {
+  const t = d.totals || { runs: 0, cost_usd: 0 };
+  $("runs-totals").textContent = `(${t.runs} runs · $${(t.cost_usd || 0).toFixed(2)})`;
+
+  const q = (d.queued || []).map((item) => {
+    const chip = el("div", "qitem");
+    chip.append(el("span", "qtxt", `${item.persona}: ${item.task.slice(0, 46)}`));
+    const x = el("button", "btn no", "remove");
+    x.onclick = () => act(`/api/queue/${item.id}/remove`);
+    chip.append(x);
+    return chip;
+  });
+  $("queued").replaceChildren(...q);
+
+  const pend = (d.pending || []).map((p) => {
+    const card = el("div", "pend");
+    const head = el("div", "row-head");
+    head.append(el("span", "chip " + (p.writer ? "writer" : "posture"), p.writer ? "write" : "read"),
+      el("span", "row-title", p.persona), el("span", "row-meta", p.add_dir || ""));
+    const btns = el("div", "btns");
+    const ok = el("button", "btn ok", "approve"); ok.onclick = () => act(`/api/runs/${p.run_id}/approve`);
+    const no = el("button", "btn no", "deny"); no.onclick = () => act(`/api/runs/${p.run_id}/deny`);
+    btns.append(ok, no);
+    card.append(head, el("p", "row-sub", p.task), btns);
+    return card;
+  });
+  $("pending").replaceChildren(...pend);
+
+  const active = new Set(d.active || []);
+  fill($("runs"), (d.runs || []).slice(0, 8).map((r) => {
+    const row = el("div", "row");
+    const head = el("div", "row-head");
+    head.append(el("span", `dot ${r.status}`), el("span", "row-title", r.persona),
+      el("span", "chip", r.source),
+      el("span", "row-meta", r.cost_usd ? `$${r.cost_usd.toFixed(3)}` : ""));
+    row.append(head, el("p", "row-sub", (r.task || "").slice(0, 90)));
+    if (active.has(r.id)) {
+      const stop = el("button", "btn no", "stop");
+      stop.onclick = () => act(`/api/runs/${r.id}/stop`);
+      row.append(stop);
+    }
+    return row;
+  }));
+}
+
+const runPersona = {};
+function addActivity(text) {
+  const a = $("activity");
+  const empty = a.querySelector(".empty");
+  if (empty) a.replaceChildren();
+  a.prepend(el("p", "act-line", text));
+  while (a.childElementCount > 14) a.removeChild(a.lastChild);
+}
+window.addEventListener("brain-run", (e) => {
+  const m = e.detail;
+  if (m.type === "run_started") { runPersona[m.run_id] = m.persona; addActivity(`${m.persona} started`); poll(); }
+  else if (m.type === "run_event") addActivity(`${runPersona[m.run_id] || "agent"} · ${m.name} ${JSON.stringify(m.input || {}).slice(0, 42)}`);
+  else if (m.type === "run_finished") { addActivity(`finished · ${m.status}`); poll(); }
+  else if (m.type === "run_pending" || m.type === "run_denied") poll();
+});
+
 async function poll() {
   if (!dashboardMode) return;
   try {
-    const [agents, jobs, schedule, health, pipeline] = await Promise.all([
+    const [agents, jobs, schedule, health, pipeline, runs] = await Promise.all([
       api("/api/agents"), api("/api/jobs"), api("/api/schedule"),
-      api("/api/health"), api("/api/pipeline"),
+      api("/api/health"), api("/api/pipeline"), api("/api/runs"),
     ]);
+    initControls(agents);
     renderAgents(agents);
     renderJobs(jobs);
     renderSchedule(schedule);
     renderHealth(health);
     renderPipeline(pipeline);
+    renderRuns(runs);
   } catch (_) {
     dashboardMode = false; // standalone voice, no dashboard API
   }

@@ -16,13 +16,16 @@ import asyncio
 import contextlib
 import json
 import secrets
+import shutil
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
-from . import data
+from . import data, registry
+from .process_manager import ProcessManager, SpawnError
 from .voice_bridge import VoiceBridge
 
 HOST = "127.0.0.1"
@@ -76,6 +79,7 @@ class Hub:
 
 hub = Hub()
 bridge = VoiceBridge(VOICE_WS, hub.broadcast)
+pm = ProcessManager(hub, claude_bin=shutil.which("claude") or "claude")
 
 
 @contextlib.asynccontextmanager
@@ -84,6 +88,7 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        await pm.stop_all()  # never leave spawned agents running past the server
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -138,6 +143,75 @@ async def schedule():
 @app.get("/api/pipeline")
 async def pipeline():
     return JSONResponse(data.read_pipeline())
+
+
+@app.get("/api/runs")
+async def runs():
+    try:
+        conn = registry.open_db()
+        out = {"runs": registry.recent_runs(conn), "totals": registry.totals(conn),
+               "active": pm.active(), "pending": pm.pending(), "queued": pm.queued()}
+        conn.close()
+        return JSONResponse(out)
+    except Exception:
+        return JSONResponse({"runs": [], "totals": {"runs": 0, "cost_usd": 0.0},
+                             "active": [], "pending": [], "queued": []})
+
+
+class SpawnReq(BaseModel):
+    persona: str
+    task: str
+    add_dir: str | None = None
+
+
+@app.post("/api/runs/spawn")
+async def spawn_run(req: SpawnReq):
+    try:
+        return JSONResponse(await pm.spawn(req.persona, req.task, req.add_dir))
+    except SpawnError as e:
+        return JSONResponse({"error": str(e)}, status_code=e.status)
+
+
+@app.post("/api/runs/propose")
+async def propose_run(req: SpawnReq):
+    try:
+        return JSONResponse(await pm.propose(req.persona, req.task, req.add_dir))
+    except SpawnError as e:
+        return JSONResponse({"error": str(e)}, status_code=e.status)
+
+
+@app.post("/api/runs/{run_id}/approve")
+async def approve_run(run_id: str):
+    try:
+        return JSONResponse(await pm.approve(run_id))
+    except SpawnError as e:
+        return JSONResponse({"error": str(e)}, status_code=e.status)
+
+
+@app.post("/api/runs/{run_id}/deny")
+async def deny_run(run_id: str):
+    ok = await pm.deny(run_id)
+    return JSONResponse({"denied": ok}, status_code=200 if ok else 404)
+
+
+@app.post("/api/runs/{run_id}/stop")
+async def stop_run(run_id: str):
+    ok = await pm.stop(run_id)
+    return JSONResponse({"stopped": ok}, status_code=200 if ok else 404)
+
+
+@app.post("/api/queue")
+async def enqueue_task(req: SpawnReq):
+    try:
+        return JSONResponse(await pm.enqueue(req.persona, req.task, req.add_dir))
+    except SpawnError as e:
+        return JSONResponse({"error": str(e)}, status_code=e.status)
+
+
+@app.post("/api/queue/{item_id}/remove")
+async def remove_task(item_id: str):
+    ok = pm.dequeue(item_id)
+    return JSONResponse({"removed": ok}, status_code=200 if ok else 404)
 
 
 @app.websocket("/ws")

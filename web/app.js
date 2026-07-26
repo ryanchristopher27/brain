@@ -63,7 +63,11 @@ function render(evt) {
       setLevel(evt.value);
       break;
     default:
-      break; // forward-compatible: ignore unknown events
+      // Forward run lifecycle events to the runs panel (panels.js listens).
+      if (typeof evt.type === "string" && evt.type.startsWith("run")) {
+        window.dispatchEvent(new CustomEvent("brain-run", { detail: evt }));
+      }
+      break;
   }
 }
 

@@ -24,8 +24,8 @@ _SRC_EXT = {".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb", "
 _SKIP_DIR = {"node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build", ".next"}
 _MANIFESTS = ("package.json", "pyproject.toml", "requirements.txt", "go.mod", "Cargo.toml", "setup.py")
 
-# MCP name → the env var its config references (None = no auth needed)
-MCP_TOKEN_ENV = {"github": "GITHUB_PAT", "notion": "NOTION_TOKEN", "playwright": None}
+# MCP name → the env var name expected for that server (None = no auth needed)
+MCP_TOKEN_ENV = {"github": "GITHUB_PERSONAL_ACCESS_TOKEN", "notion": "NOTION_TOKEN", "playwright": None}
 
 
 def _parse_frontmatter(text: str) -> dict:
@@ -192,17 +192,28 @@ def read_pipeline() -> dict:
     return {"columns": PHASE_ORDER, "projects": projects}
 
 
+def _token_set(env_var: str | None, mcp_env: dict) -> bool:
+    """Return True if the token is available via os.environ or a non-placeholder settings value."""
+    if env_var is None:
+        return True
+    if os.environ.get(env_var, ""):
+        return True
+    val = mcp_env.get(env_var, "")
+    return bool(val) and not val.startswith("${")
+
+
 def read_health() -> dict:
     mcps = []
     try:
-        import json
         cfg = json.loads(SETTINGS.read_text()) if SETTINGS.exists() else {}
-        for name in sorted((cfg.get("mcpServers") or {}).keys()):
-            env = MCP_TOKEN_ENV.get(name, "unknown")
+        servers = cfg.get("mcpServers") or {}
+        for name in sorted(servers.keys()):
+            env_var = MCP_TOKEN_ENV.get(name, "unknown")
+            mcp_env = servers[name].get("env") or {}
             mcps.append({
                 "name": name,
-                "needs_token": bool(env),
-                "token_set": (env is None) or bool(os.environ.get(env or "", "")),
+                "needs_token": bool(env_var),
+                "token_set": _token_set(env_var, mcp_env),
             })
     except Exception:
         pass
