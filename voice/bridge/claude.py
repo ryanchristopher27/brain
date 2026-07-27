@@ -19,10 +19,24 @@ import subprocess
 from typing import Iterator
 
 
+# Injected so the model knows its reply is spoken aloud — short, conversational, no syntax.
+VOICE_SYSTEM_PROMPT = (
+    "Your reply will be spoken aloud by text-to-speech. Answer like a person talking, in 1-2 short "
+    "sentences unless more is truly needed. "
+    "NEVER speak code, symbols, brackets, parentheses, operators, file paths, URLs, or punctuation "
+    "out loud — do not say words like 'bracket', 'paren', or 'equals'. Describe ideas in plain words "
+    "only. If the real answer needs code or exact syntax, give a one-sentence conceptual explanation "
+    "and offer to put the details in the dashboard — never dictate the code. "
+    "No markdown, lists, headings, or emoji. Skip preamble and sign-offs; just say the answer."
+)
+
+
 class ClaudeBridge:
-    def __init__(self, default_persona: str = "scout", resume_session: bool = True):
+    def __init__(self, default_persona: str = "scout", resume_session: bool = True,
+                 model: str | None = None):
         self.default_persona = default_persona
         self.resume_session = resume_session
+        self.model = model  # e.g. "haiku" for a snappy voice loop; None = CLI default
         self._session_id: str | None = None
         self._bin = shutil.which("claude") or "claude"
 
@@ -30,9 +44,12 @@ class ClaudeBridge:
         cmd = [
             self._bin, "-p", text,
             "--agent", persona,
+            "--append-system-prompt", VOICE_SYSTEM_PROMPT,
             "--output-format", "stream-json",
             "--verbose",  # required for stream-json events under --print
         ]
+        if self.model:
+            cmd += ["--model", self.model]
         if self.resume_session and self._session_id:
             cmd += ["--resume", self._session_id]
         return cmd

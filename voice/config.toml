@@ -12,12 +12,16 @@ model   = "base.en"        # base.en is a good latency/quality point on M2 Pro
 
 [tts]
 backend = "say"            # "say" (local macOS) | "piper" (local) | "elevenlabs"|"openai" (cloud)
-voice   = "Samantha"       # macOS `say` voice; ignored by other backends
+# For much better quality, download a Premium voice: System Settings → Accessibility → Spoken
+# Content → System Voice → Manage Voices → an "(English) … (Premium)" voice. Then set its exact
+# name here (list with:  say -v '?' | grep -i premium ). Falls back fine to Samantha until then.
+voice   = "Samantha"       # e.g. "Ava (Premium)", "Evan (Premium)"
 
 [bridge]
 # Headless Claude Code bridge.
 default_persona = "scout"  # voice defaults to the read-only persona
 resume_session  = true     # keep one rolling session across turns
+model           = "haiku"  # fast model for a snappy voice loop; "sonnet" for smarter/slower
 
 [server]
 # Local websocket the web/ visualizer subscribes to.

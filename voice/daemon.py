@@ -44,6 +44,7 @@ def build(cfg: dict):
     bridge = ClaudeBridge(
         default_persona=cfg["bridge"].get("default_persona", "scout"),
         resume_session=cfg["bridge"].get("resume_session", True),
+        model=cfg["bridge"].get("model") or None,
     )
     server = EventServer(cfg["server"]["host"], cfg["server"]["port"])
     return stt, tts, bridge, server
