@@ -68,6 +68,22 @@ refreshes the Obsidian vault. The web dashboard needs no refresh: phase + task c
 computed live on each request. So: open Claude in a project → it appears/updates on its own.
 Fire-and-forget and never blocks a session. Statuses stay whatever you declared.
 
+## Artifact archive
+Brain is the canonical home for every project's **markdown** artifacts. `dashboard/artifacts.py`
+copies each project's `docs/*.md`, `.brain/tasks/*.md`, its session summaries (extracted from
+`updates/queue.md`), and any `mark`ed deliverables into `brain/artifacts/<project>/`, with a
+per-project `INDEX.md` and a top-level catalog `README.md`. Code and working files stay in each
+repo; these are brain's copies of record.
+
+Runs automatically inside the SessionStart sync (`projects.sync_cwd` → `artifacts.sync_project`),
+so opening any project refreshes its archive. Manual:
+```sh
+python -m dashboard.artifacts_cli sync --all                 # backfill/refresh every project
+python -m dashboard.artifacts_cli mark --project P --file docs/spec.md --note "…"
+```
+Copies mirror their source (a deleted/renamed original is pruned on next sync). The archive is
+plain markdown, so pointing an Obsidian vault at `brain/artifacts/` gives a browsable library.
+
 ## Status → milestones
 - **D1 ✅** server + Host/Origin/token security + voice-subscribe proxy
 - **D3** read panels: roster · jobs · health · activity

@@ -81,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
                 parts.append(f"registered {res['registered']}")
             elif res["skipped"]:
                 parts.append(res["skipped"])
+            if res.get("artifacts"):
+                parts.append(f"artifacts {res['artifacts']}")
             if res["vault"]:
                 parts.append(f"vault {res['vault']}")
             print("project sync: " + " · ".join(parts))

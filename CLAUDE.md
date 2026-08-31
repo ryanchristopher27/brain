@@ -13,6 +13,8 @@ Brain is a modular LLM resource suite — a vault of workflow skills, rules, hoo
 | `mcps/` | MCP server configs (`shared/` no-auth, `personal/` env-var'd); merged into tool settings |
 | `voice/` | Runtime module — local voice core driving headless `claude -p` (self-contained deps) |
 | `web/` | Runtime module — live visualizer of the voice agent (subscribes to `voice/`'s event stream) |
+| `dashboard/` | Local control server + project registry, task tracker, and artifact collector (see its README) |
+| `artifacts/` | Central archive of every project's **markdown** artifacts (docs · tasks · sessions · marked). Copies of record — auto-synced on SessionStart; originals stay in each project |
 | `.cursor/rules/` | Cursor rule files, auto-loaded when brain/ is open |
 | `workflow/*/spec.md` | Design docs for each workflow phase — not operative |
 | `workflow/_phases.md` | How phases connect and when to transition |

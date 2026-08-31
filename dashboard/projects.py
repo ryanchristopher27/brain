@@ -120,12 +120,15 @@ def sync_cwd(path: str = ".", regenerate: bool = True) -> dict:
     """Auto-register the project at `path` (git toplevel when available) if it's a real,
     not-yet-tracked project, then refresh the Obsidian vault. Called by the SessionStart
     hook on every project you open — never raises, so it can't break a session."""
-    result: dict = {"registered": None, "skipped": None, "vault": None}
+    result: dict = {"registered": None, "skipped": None, "vault": None, "artifacts": None}
+    proj_name = None
+    proj_root = None
     try:
         root = _git_toplevel(path) or Path(path).expanduser().resolve()
         if not _looks_like_project(root):
             result["skipped"] = "not a tracked-worthy project"
         else:
+            proj_root = root
             tracked = None
             for m in data._projects_meta():
                 mroot = m["root"].expanduser()
@@ -138,14 +141,25 @@ def sync_cwd(path: str = ".", regenerate: bool = True) -> dict:
                         tracked = m["name"]
                         break
             if tracked:
+                proj_name = tracked
                 result["skipped"] = f"already tracked ({tracked})"
             elif root.name in {m["name"] for m in data._projects_meta()}:
                 result["skipped"] = f"name {root.name!r} already used — add manually with a unique name"
             else:
                 add_project(root.name, str(root))
+                proj_name = root.name
                 result["registered"] = root.name
     except Exception as e:  # never break a session
         result["skipped"] = f"error: {e}"
+    # Copy this project's markdown artifacts into brain (best-effort).
+    if proj_name and proj_root:
+        try:
+            from . import artifacts
+            r = artifacts.sync_project(proj_name, proj_root)
+            artifacts.write_catalog()
+            result["artifacts"] = f"{r['docs']}d/{r['tasks']}t/{r['sessions']}s"
+        except Exception as e:
+            result["artifacts"] = f"error: {e}"
     if regenerate:
         try:
             from . import projects_vault
