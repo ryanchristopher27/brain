@@ -1,0 +1,87 @@
+filters:
+  and:
+    - file.inFolder("tasks")
+    - file.ext == "md"
+    - type == "task" || type == "issue"
+properties:
+  file.name:
+    displayName: File
+  title:
+    displayName: Task
+  status:
+    displayName: Status
+  type:
+    displayName: Type
+  assignee:
+    displayName: Who
+  source:
+    displayName: Source
+  updated:
+    displayName: Updated
+  created:
+    displayName: Created
+views:
+  - type: table
+    name: Board (all)
+    order:
+      - title
+      - status
+      - type
+      - assignee
+      - updated
+    sort:
+      - property: status
+        direction: ASC
+      - property: updated
+        direction: DESC
+  - type: table
+    name: Doing
+    filters:
+      and:
+        - status == "doing"
+    order:
+      - title
+      - type
+      - assignee
+      - source
+      - updated
+    sort:
+      - property: updated
+        direction: DESC
+  - type: table
+    name: Review
+    filters:
+      and:
+        - status == "review"
+    order:
+      - title
+      - type
+      - assignee
+      - source
+      - updated
+  - type: table
+    name: Backlog
+    filters:
+      and:
+        - status == "backlog"
+    order:
+      - title
+      - type
+      - source
+      - created
+    sort:
+      - property: created
+        direction: ASC
+  - type: table
+    name: Done
+    filters:
+      and:
+        - status == "done"
+    order:
+      - title
+      - type
+      - source
+      - updated
+    sort:
+      - property: updated
+        direction: DESC

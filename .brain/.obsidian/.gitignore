@@ -1,0 +1,4 @@
+# Obsidian per-machine state — keep vault config, ignore local cruft
+workspace.json
+workspace-mobile.json
+cache/
