@@ -1,7 +1,7 @@
 ---
 id: a9474b
 source: plan:brain:W5
-title: W5 — /reflect hook: close done + file follow-ups
+title: "W5 — /reflect hook: close done + file follow-ups"
 type: task
 status: done
 assignee: 

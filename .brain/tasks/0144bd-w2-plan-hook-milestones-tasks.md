@@ -1,7 +1,7 @@
 ---
 id: 0144bd
 source: plan:brain:W2
-title: W2 — /plan hook: milestones → tasks
+title: "W2 — /plan hook: milestones → tasks"
 type: task
 status: done
 assignee: 

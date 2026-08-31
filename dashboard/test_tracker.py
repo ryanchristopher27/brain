@@ -37,6 +37,20 @@ def test_serialize_idempotent():
     assert f.read_bytes() == before, "no-op re-serialize must be byte-identical"
 
 
+def test_colon_title_is_valid_yaml_and_roundtrips():
+    # A title with a colon-space ("hook: close") must be quoted on disk so strict YAML
+    # parsers (Obsidian Bases, PyYAML) don't drop the file — but read back verbatim.
+    root = _repo()
+    title = "W5 — /reflect hook: close done + file follow-ups"
+    t = tracker.create_task(root, title)
+    f = next(tracker._tasks_dir(root).glob(f"{t['id']}-*.md"))
+    text = f.read_text()
+    assert f'title: "{title}"' in text, "colon title must be quoted in frontmatter"
+    assert tracker.read_task(root, t["id"])["title"] == title, "title must round-trip clean"
+    # timestamps (colon, no space) and colon-delimited sources must stay unquoted
+    assert 'created: "' not in text and "created:" in text
+
+
 def test_status_transitions():
     root = _repo()
     t = tracker.create_task(root, "Move me")

@@ -1,7 +1,7 @@
 ---
 id: c025bc
 source: plan:brain:T6
-title: T6 — backlog pull: ready tasks → D9 queue
+title: "T6 — backlog pull: ready tasks → D9 queue"
 type: task
 status: backlog
 assignee: 

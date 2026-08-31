@@ -1,7 +1,7 @@
 ---
 id: bb8bdb
 source: plan:brain:W3
-title: W3 — /build hook: task status + run link
+title: "W3 — /build hook: task status + run link"
 type: task
 status: done
 assignee: 

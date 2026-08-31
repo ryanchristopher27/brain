@@ -46,6 +46,45 @@ def _new_id() -> str:
     return secrets.token_hex(3)  # 6 hex chars, collision-free across offline devices
 
 
+# ── scalar (de)serialization ─────────────────────────────────────────────────
+# Frontmatter values are plain strings, but a value like "hook: close" contains a
+# colon-space, which strict YAML parsers (Obsidian Bases, PyYAML) read as a nested
+# mapping and reject — silently dropping the whole file. Our own reader partitions on
+# the first colon so it never noticed, but we must still *emit* valid YAML. Quote only
+# values that need it (keeps timestamps like 2026-…T22:01:58Z and source:a:b:c bare),
+# and strip the quotes on read so round-trips stay byte-identical after one pass.
+_YAML_INDICATORS = "-?:,[]{}#&*!|>'\"%@`"
+
+
+def _needs_quote(v: str) -> bool:
+    if v == "":
+        return False
+    if v != v.strip():              # leading/trailing whitespace
+        return True
+    if v[0] in _YAML_INDICATORS:    # leading YAML indicator char
+        return True
+    if ": " in v or v.endswith(":"):  # colon YAML would read as a mapping
+        return True
+    if " #" in v:                   # inline comment
+        return True
+    return False
+
+
+def _dump_scalar(v) -> str:
+    v = "" if v is None else str(v)
+    if not _needs_quote(v):
+        return v
+    return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _load_scalar(v: str) -> str:
+    if len(v) >= 2 and v[0] == '"' and v[-1] == '"':
+        return v[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    if len(v) >= 2 and v[0] == "'" and v[-1] == "'":
+        return v[1:-1].replace("''", "'")
+    return v
+
+
 def _slug(title: str, maxlen: int = 40) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", (title or "").lower()).strip("-")
     return (s[:maxlen].strip("-")) or "task"
@@ -78,7 +117,7 @@ def _parse(text: str) -> dict:
         while i < len(lines) and lines[i].strip() != "---":
             if ":" in lines[i]:
                 k, _, v = lines[i].partition(":")
-                fm[k.strip()] = v.strip()
+                fm[k.strip()] = _load_scalar(v.strip())
             i += 1
         i += 1  # skip closing ---
 
@@ -110,7 +149,7 @@ def _parse(text: str) -> dict:
 
 def _serialize(task: dict) -> str:
     out = ["---"]
-    out += [f"{k}: {task.get(k, '')}" for k in FRONTMATTER_ORDER]
+    out += [f"{k}: {_dump_scalar(task.get(k, ''))}" for k in FRONTMATTER_ORDER]
     out += ["---", "", "## Brief", task.get("brief", ""), ""]
     out.append("## Acceptance")
     out += [f"- [ ] {a}" for a in task.get("acceptance", [])]

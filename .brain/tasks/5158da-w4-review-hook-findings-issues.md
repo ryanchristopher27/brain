@@ -1,7 +1,7 @@
 ---
 id: 5158da
 source: plan:brain:W4
-title: W4 — /review hook: findings → issues
+title: "W4 — /review hook: findings → issues"
 type: task
 status: done
 assignee: 
