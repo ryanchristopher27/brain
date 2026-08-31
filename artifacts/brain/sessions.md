@@ -1,6 +1,6 @@
 # brain — session summaries
 
-_Extracted from brain's `updates/queue.md` at 2026-08-31T03:07:43Z._
+_Extracted from brain's `updates/queue.md`._
 
 ## 2026-06-06 — brain (frontend domain)
 

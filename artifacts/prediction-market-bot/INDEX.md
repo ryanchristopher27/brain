@@ -1,6 +1,6 @@
 # prediction-market-bot — artifacts
 
-_Brain's copies of `prediction-market-bot`'s markdown artifacts. Source: `/Users/rchristopher/Desktop/Code/vault/prediction_market_bot`. Synced 2026-08-31T03:07:02Z._
+_Brain's copies of `prediction-market-bot`'s markdown artifacts. Source: `/Users/rchristopher/Desktop/Code/vault/prediction_market_bot`._
 
 - **Workflow docs:** 9  (`docs/`)
 - **Task records:** 0  (`tasks/`)

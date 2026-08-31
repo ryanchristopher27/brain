@@ -90,7 +90,7 @@ def sync_project(name: str, root: Path) -> dict:
             dest.mkdir(parents=True, exist_ok=True)
             (dest / "sessions.md").write_text(
                 f"# {name} — session summaries\n\n"
-                f"_Extracted from brain's `updates/queue.md` at {_now()}._\n\n{sessions_text}\n"
+                f"_Extracted from brain's `updates/queue.md`._\n\n{sessions_text}\n"
             )
         deliv = sorted((dest / "deliverables").glob("*")) if (dest / "deliverables").is_dir() else []
         result.update(docs=len(docs), tasks=len(tasks), sessions=n_sessions, deliverables=len(deliv))
@@ -105,8 +105,7 @@ def _write_index(name: str, root: Path, dest: Path, counts: dict) -> None:
     lines = [
         f"# {name} — artifacts",
         "",
-        f"_Brain's copies of `{name}`'s markdown artifacts. Source: `{root}`. "
-        f"Synced {_now()}._",
+        f"_Brain's copies of `{name}`'s markdown artifacts. Source: `{root}`._",
         "",
         f"- **Workflow docs:** {counts['docs']}  (`docs/`)",
         f"- **Task records:** {counts['tasks']}  (`tasks/`)",
@@ -162,5 +161,5 @@ def write_catalog() -> None:
         "| Project | Docs | Tasks | Sessions | Deliverables |\n"
         "|---------|-----:|------:|:--------:|-------------:|\n"
         f"{table}\n\n"
-        f"_Last catalog refresh {_now()}. Regenerate: `python -m dashboard.artifacts_cli sync --all`._\n"
+        "_Regenerate: `python -m dashboard.artifacts_cli sync --all` · push: `/sync`._\n"
     )

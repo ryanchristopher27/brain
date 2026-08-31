@@ -9,11 +9,17 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from dashboard import artifacts, data  # noqa: E402
+
+
+def _git(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(data.BRAIN_DIR), *args],
+                          capture_output=True, text=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -30,6 +36,10 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--note", default="")
 
     sub.add_parser("ls")
+
+    pu = sub.add_parser("push")   # backs the /sync command
+    pu.add_argument("--message", default=None)
+    pu.add_argument("--dry-run", action="store_true")
 
     args = p.parse_args(argv)
 
@@ -57,6 +67,52 @@ def main(argv: list[str] | None = None) -> int:
         for r in artifacts.sync_all():
             print(f"  {r['project']:28} {r['docs']} docs · {r['tasks']} tasks · "
                   f"{r['sessions']} sessions · {r['deliverables']} deliverables")
+    elif args.cmd == "push":
+        return _push(args)
+    return 0
+
+
+def _push(args) -> int:
+    # 1. refresh the archive from every tracked project
+    synced = artifacts.sync_all()
+    print(f"refreshed {len(synced)} project(s)")
+
+    if "origin" not in _git("remote").stdout.split():
+        sys.exit("no 'origin' remote on the brain repo — add one before syncing")
+    branch = _git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+
+    # 2. stage only artifacts/, check whether anything changed
+    _git("add", "--", "artifacts")
+    has_changes = _git("diff", "--cached", "--quiet", "--", "artifacts").returncode != 0
+
+    if args.dry_run:
+        _git("reset", "--quiet", "--", "artifacts")   # leave the tree as we found it
+        print("dry-run — would:")
+        if has_changes:
+            print("  commit artifacts/ changes:")
+            print("    " + _git("status", "--short", "--", "artifacts").stdout.strip().replace("\n", "\n    "))
+        else:
+            print("  (artifacts/ unchanged — nothing to commit)")
+        ahead = _git("rev-list", "--count", "@{u}..HEAD").stdout.strip() or "?"
+        print(f"  push {ahead} pending commit(s) → origin/{branch}")
+        return 0
+
+    # 3. commit artifacts if changed
+    if has_changes:
+        msg = args.message or f"Sync artifacts {artifacts._now()}"
+        c = _git("commit", "-m", msg)
+        if c.returncode != 0:
+            sys.exit(f"commit failed:\n{c.stdout}{c.stderr}")
+        print(f"committed: {msg}")
+    else:
+        print("artifacts/ unchanged — nothing new to commit")
+
+    # 4. push the branch to origin
+    ahead = _git("rev-list", "--count", "@{u}..HEAD").stdout.strip() or "?"
+    push = _git("push", "origin", "HEAD")
+    if push.returncode != 0:
+        sys.exit(f"push failed:\n{(push.stderr or push.stdout).strip()}")
+    print(f"pushed {ahead} commit(s) → origin/{branch} ✓")
     return 0
 
 

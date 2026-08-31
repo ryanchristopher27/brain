@@ -1,6 +1,6 @@
 # brain — artifacts
 
-_Brain's copies of `brain`'s markdown artifacts. Source: `/Users/rchristopher/Desktop/Code/brain`. Synced 2026-08-31T03:07:43Z._
+_Brain's copies of `brain`'s markdown artifacts. Source: `/Users/rchristopher/Desktop/Code/brain`._
 
 - **Workflow docs:** 4  (`docs/`)
 - **Task records:** 13  (`tasks/`)

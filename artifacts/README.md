@@ -9,4 +9,4 @@ Central, version-controlled home for the **markdown artifacts** of every project
 | [prediction-market-bot](prediction-market-bot/INDEX.md) | 9 | 0 | yes | 0 |
 | [ryans-boomin-beats](ryans-boomin-beats/INDEX.md) | 5 | 8 | yes | 0 |
 
-_Last catalog refresh 2026-08-31T03:07:43Z. Regenerate: `python -m dashboard.artifacts_cli sync --all`._
+_Regenerate: `python -m dashboard.artifacts_cli sync --all` · push: `/sync`._

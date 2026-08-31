@@ -1,6 +1,6 @@
 # prediction-market-bot — session summaries
 
-_Extracted from brain's `updates/queue.md` at 2026-08-31T03:07:02Z._
+_Extracted from brain's `updates/queue.md`._
 
 ## 2026-06-04 — prediction_market_bot
 
