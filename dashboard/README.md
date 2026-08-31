@@ -59,6 +59,15 @@ phase, task counts) into a standalone vault (`~/Desktop/Code/brain-projects-vaul
 Bases board tabbed by status. Regenerable; anything under a card's `## Notes` heading is
 preserved across regenerations. Single source of truth stays `projects.json`.
 
+### Automatic updates (SessionStart hook)
+`universal/hooks/scripts/session-start-project-sync.sh` runs `projects_cli sync` on every
+Claude Code SessionStart (installed into the **global** `~/.claude/settings.json` by
+`install.sh`, so it fires in *any* project). It auto-registers the current project if it's a
+real, untracked one — git repo, brain-workflow repo, or one with a build manifest — and
+refreshes the Obsidian vault. The web dashboard needs no refresh: phase + task counts are
+computed live on each request. So: open Claude in a project → it appears/updates on its own.
+Fire-and-forget and never blocks a session. Statuses stay whatever you declared.
+
 ## Status → milestones
 - **D1 ✅** server + Host/Origin/token security + voice-subscribe proxy
 - **D3** read panels: roster · jobs · health · activity

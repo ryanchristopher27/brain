@@ -41,6 +41,16 @@
       }
     ],
     "Notification": [],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/rchristopher/Desktop/Code/brain/universal/hooks/scripts/session-start-project-sync.sh"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

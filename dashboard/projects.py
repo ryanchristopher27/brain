@@ -11,6 +11,7 @@ Stdlib-only, pure over the filesystem so it is unit-testable over a temp registr
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from . import data
@@ -87,6 +88,72 @@ def remove_project(name: str) -> None:
     if len(kept) == len(entries):
         raise ProjectError(f"unknown project {name!r}")
     _save_raw(kept)
+
+
+def _git_toplevel(path: str | Path) -> Path | None:
+    try:
+        out = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True, timeout=5)
+        if out.returncode == 0 and out.stdout.strip():
+            return Path(out.stdout.strip())
+    except Exception:
+        pass
+    return None
+
+
+def _looks_like_project(root: Path) -> bool:
+    """A directory worth auto-tracking: a git repo, a brain-workflow repo, or one with a
+    recognized build manifest. Excludes $HOME and the generated projects vault."""
+    if not root.is_dir() or root == Path.home():
+        return False
+    from . import projects_vault
+    if root.resolve() == projects_vault.DEFAULT_VAULT.resolve():
+        return False
+    if (root / ".git").exists() or (root / ".brain").is_dir():
+        return True
+    if (root / "docs" / "plan.md").exists() or (root / "docs" / "brainstorm.md").exists():
+        return True
+    return any((root / m).exists() for m in data._MANIFESTS)
+
+
+def sync_cwd(path: str = ".", regenerate: bool = True) -> dict:
+    """Auto-register the project at `path` (git toplevel when available) if it's a real,
+    not-yet-tracked project, then refresh the Obsidian vault. Called by the SessionStart
+    hook on every project you open — never raises, so it can't break a session."""
+    result: dict = {"registered": None, "skipped": None, "vault": None}
+    try:
+        root = _git_toplevel(path) or Path(path).expanduser().resolve()
+        if not _looks_like_project(root):
+            result["skipped"] = "not a tracked-worthy project"
+        else:
+            tracked = None
+            for m in data._projects_meta():
+                mroot = m["root"].expanduser()
+                try:
+                    if root == mroot or root.is_relative_to(mroot):
+                        tracked = m["name"]
+                        break
+                except AttributeError:  # py<3.9 has no is_relative_to
+                    if str(root).startswith(str(mroot)):
+                        tracked = m["name"]
+                        break
+            if tracked:
+                result["skipped"] = f"already tracked ({tracked})"
+            elif root.name in {m["name"] for m in data._projects_meta()}:
+                result["skipped"] = f"name {root.name!r} already used — add manually with a unique name"
+            else:
+                add_project(root.name, str(root))
+                result["registered"] = root.name
+    except Exception as e:  # never break a session
+        result["skipped"] = f"error: {e}"
+    if regenerate:
+        try:
+            from . import projects_vault
+            projects_vault.generate()
+            result["vault"] = "refreshed"
+        except Exception as e:
+            result["vault"] = f"error: {e}"
+    return result
 
 
 def enriched() -> list[dict]:

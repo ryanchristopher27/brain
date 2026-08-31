@@ -48,6 +48,10 @@ def main(argv: list[str] | None = None) -> int:
     v = sub.add_parser("vault")
     v.add_argument("--path", default=None)
 
+    sy = sub.add_parser("sync")   # used by the SessionStart hook
+    sy.add_argument("--path", default=".")
+    sy.add_argument("--no-vault", action="store_true")
+
     args = p.parse_args(argv)
 
     try:
@@ -70,6 +74,16 @@ def main(argv: list[str] | None = None) -> int:
             from dashboard import projects_vault
             out = projects_vault.generate(args.path)
             print(f"vault written → {out}  ({len(projects.list_projects())} projects)")
+        elif args.cmd == "sync":
+            res = projects.sync_cwd(args.path, regenerate=not args.no_vault)
+            parts = []
+            if res["registered"]:
+                parts.append(f"registered {res['registered']}")
+            elif res["skipped"]:
+                parts.append(res["skipped"])
+            if res["vault"]:
+                parts.append(f"vault {res['vault']}")
+            print("project sync: " + " · ".join(parts))
     except projects.ProjectError as e:
         sys.exit(f"error: {e}")
     return 0

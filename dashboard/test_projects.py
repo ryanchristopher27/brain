@@ -16,6 +16,7 @@ from . import data, projects, projects_vault, tracker
 def _fresh_registry() -> Path:
     """Redirect both modules' registry path at a new temp file; return a usable project root."""
     reg = Path(tempfile.mkdtemp()) / "projects.json"
+    reg.write_text("[]")                     # present-but-empty ⇒ "track nothing" (no auto-discovery)
     data.PROJECTS_REGISTRY = reg
     projects.REGISTRY = reg
     root = Path(tempfile.mkdtemp())          # a real dir so add_project's existence check passes
@@ -108,6 +109,33 @@ def test_vault_generation_and_note_preservation():
     regenerated = card.read_text()
     assert "hand-written note" in regenerated, "notes must survive regeneration"
     assert "status: shipped" in regenerated, "frontmatter must refresh"
+
+
+def test_sync_registers_new_project():
+    _fresh_registry()
+    proj = Path(tempfile.mkdtemp())
+    (proj / "package.json").write_text("{}")            # → looks like a project
+    res = projects.sync_cwd(str(proj), regenerate=False)
+    assert res["registered"] == proj.name
+    assert proj.name in {p["name"] for p in projects.list_projects()}
+
+
+def test_sync_skips_non_project():
+    _fresh_registry()
+    empty = Path(tempfile.mkdtemp())                     # no manifest / .git / docs
+    res = projects.sync_cwd(str(empty), regenerate=False)
+    assert res["registered"] is None and "not a" in (res["skipped"] or "")
+    assert projects.list_projects() == []
+
+
+def test_sync_skips_already_tracked():
+    _fresh_registry()
+    proj = Path(tempfile.mkdtemp())
+    (proj / "pyproject.toml").write_text("")
+    projects.add_project(proj.name, str(proj))
+    res = projects.sync_cwd(str(proj), regenerate=False)
+    assert res["registered"] is None and "already tracked" in (res["skipped"] or "")
+    assert len(projects.list_projects()) == 1           # no duplicate
 
 
 TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
