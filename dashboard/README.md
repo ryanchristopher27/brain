@@ -36,8 +36,32 @@ serves; the voice panel just shows disconnected.
 | `GET /api/health` | `{ok, voice_connected}` |
 | `WS  /ws?token=…` | live event hub (voice events re-broadcast) |
 
+## Projects registry & status
+Which projects brain tracks lives in `~/.claude/brain/projects.json` — a JSON array of
+`{name, root_path, status}`. Each project carries a **declared lifecycle status**
+(`active · paused · blocked · shipped · archived`) *orthogonal* to its auto-detected
+workflow phase (`_detect_phase`). With no registry file, the system falls back to
+auto-discovering sibling repos that use the brain workflow.
+
+Manage it with the CLI (no server needed):
+```sh
+python -m dashboard.projects_cli ls
+python -m dashboard.projects_cli add   --name my-proj --path .          # register cwd
+python -m dashboard.projects_cli status --name my-proj --to shipped
+python -m dashboard.projects_cli vault                                  # (re)build the Obsidian board
+```
+`/api/projects` returns each project enriched with status + phase + task counts;
+`POST /api/projects/{name}/status` sets status; the web pipeline shows a status chip per card.
+
+### Obsidian projects vault
+`dashboard/projects_vault.py` materializes one markdown card per project (declared status,
+phase, task counts) into a standalone vault (`~/Desktop/Code/brain-projects-vault`) with a
+Bases board tabbed by status. Regenerable; anything under a card's `## Notes` heading is
+preserved across regenerations. Single source of truth stays `projects.json`.
+
 ## Status → milestones
 - **D1 ✅** server + Host/Origin/token security + voice-subscribe proxy
 - **D3** read panels: roster · jobs · health · activity
 - **D2** orb absorbed as the active-session panel
 - **D7** work-pipeline board
+- **D8 ✅** project registry + declared status + Obsidian projects vault

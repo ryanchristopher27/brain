@@ -20,6 +20,10 @@ PROJECTS_REGISTRY = Path.home() / ".claude" / "brain" / "projects.json"
 
 # Workflow columns, least → most advanced (the tiebreak order from the fleet recon).
 PHASE_ORDER = ["brainstorm", "plan", "scaffold", "build", "review", "reflect"]
+
+# Declared, human-set lifecycle status — orthogonal to the auto-detected workflow phase.
+PROJECT_STATUSES = ("active", "paused", "blocked", "shipped", "archived")
+DEFAULT_PROJECT_STATUS = "active"
 _SRC_EXT = {".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb", ".c", ".cpp"}
 _SKIP_DIR = {"node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build", ".next"}
 _MANIFESTS = ("package.json", "pyproject.toml", "requirements.txt", "go.mod", "Cargo.toml", "setup.py")
@@ -164,32 +168,47 @@ def _detect_phase(root: Path) -> dict:
     return {"phase": phase, "detected": detected, "iterating": iterating, "override": False}
 
 
-def _project_roots() -> list[tuple[str, Path]]:
-    roots: list[tuple[str, Path]] = []
+def _projects_meta() -> list[dict]:
+    """Projects to track, as [{name, root: Path, status}].
+
+    Registry (`~/.claude/brain/projects.json`) is the source of truth when present —
+    each entry is {name, root_path, status?}. With no registry, fall back to
+    auto-discovering sibling repos that use the brain workflow (all `active`)."""
     if PROJECTS_REGISTRY.exists():
         try:
+            metas: list[dict] = []
             for e in json.loads(PROJECTS_REGISTRY.read_text()):
-                roots.append((e["name"], Path(e["root_path"]).expanduser()))
+                status = e.get("status", DEFAULT_PROJECT_STATUS)
+                metas.append({
+                    "name": e["name"],
+                    "root": Path(e["root_path"]).expanduser(),
+                    "status": status if status in PROJECT_STATUSES else DEFAULT_PROJECT_STATUS,
+                })
+            return metas  # honor the registry literally, even when empty ("track nothing")
         except Exception:
-            pass
-    if not roots:
-        # Default: sibling dirs that use the brain workflow (have docs/plan|brainstorm).
-        for d in sorted(BRAIN_DIR.parent.iterdir()):
-            if d.is_dir() and ((d / "docs" / "plan.md").exists() or (d / "docs" / "brainstorm.md").exists()):
-                roots.append((d.name, d))
-        if not any(r[1] == BRAIN_DIR for r in roots):
-            roots.append((BRAIN_DIR.name, BRAIN_DIR))
-    return roots
+            pass  # corrupt/unreadable → fall through to auto-discovery
+    metas = []
+    # Default: sibling dirs that use the brain workflow (have docs/plan|brainstorm).
+    for d in sorted(BRAIN_DIR.parent.iterdir()):
+        if d.is_dir() and ((d / "docs" / "plan.md").exists() or (d / "docs" / "brainstorm.md").exists()):
+            metas.append({"name": d.name, "root": d, "status": DEFAULT_PROJECT_STATUS})
+    if not any(m["root"] == BRAIN_DIR for m in metas):
+        metas.append({"name": BRAIN_DIR.name, "root": BRAIN_DIR, "status": DEFAULT_PROJECT_STATUS})
+    return metas
+
+
+def _project_roots() -> list[tuple[str, Path]]:
+    return [(m["name"], m["root"]) for m in _projects_meta()]
 
 
 def read_pipeline() -> dict:
     projects = []
-    for name, root in _project_roots():
+    for m in _projects_meta():
         try:
-            projects.append({"name": name, **_detect_phase(root)})
+            projects.append({"name": m["name"], "status": m["status"], **_detect_phase(m["root"])})
         except Exception:
             pass
-    return {"columns": PHASE_ORDER, "projects": projects}
+    return {"columns": PHASE_ORDER, "projects": projects, "statuses": list(PROJECT_STATUSES)}
 
 
 def _token_set(env_var: str | None, mcp_env: dict) -> bool:

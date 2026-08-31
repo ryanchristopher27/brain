@@ -179,7 +179,19 @@ button, select, input {
 .col-head { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted);
   font-weight: 600; padding-bottom: 0.4rem; border-bottom: 1px solid var(--border); }
 .proj { background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 0.5rem 0.55rem; display: grid; gap: 0.4rem; }
+.proj-head { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; }
 .proj-name { font-weight: 600; font-size: 0.82rem; overflow-wrap: anywhere; }
+.status {
+  font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap;
+  border-radius: 999px; padding: 0.05rem 0.42rem; flex: none;
+  color: var(--sc); border: 1px solid color-mix(in oklch, var(--sc) 40%, transparent);
+  background: color-mix(in oklch, var(--sc) 14%, transparent);
+}
+.status-active  { --sc: var(--ok); }
+.status-paused  { --sc: var(--muted); }
+.status-blocked { --sc: var(--bad); }
+.status-shipped { --sc: var(--listening); }
+.status-archived{ --sc: var(--idle); }
 .badges { display: flex; gap: 3px; }
 .badge { width: 7px; height: 7px; border-radius: 50%; background: color-mix(in oklch, var(--border) 80%, transparent); }
 .badge.on { background: var(--ok); }

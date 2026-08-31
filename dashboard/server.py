@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import data, registry, tracker
+from . import data, projects as projects_mod, registry, tracker
 from .process_manager import ProcessManager, SpawnError
 from .voice_bridge import VoiceBridge
 
@@ -225,9 +225,23 @@ def _project_root(name: str) -> Path | None:
 
 @app.get("/api/projects")
 async def projects():
-    out = [{"name": n, "root": str(root), "tasks": len(tracker.list_tasks(root))}
-           for n, root in data._project_roots()]
+    # Enriched with declared status + auto phase + task counts. `tasks` kept as an alias
+    # of tasks_total for backward compat with the existing task-panel dropdown.
+    out = [{**p, "root": p["root_path"], "tasks": p["tasks_total"]} for p in projects_mod.enriched()]
     return JSONResponse(out)
+
+
+class ProjectStatus(BaseModel):
+    status: str
+
+
+@app.post("/api/projects/{name}/status")
+async def set_project_status(name: str, req: ProjectStatus):
+    try:
+        e = projects_mod.set_status(name, req.status)
+    except projects_mod.ProjectError as err:
+        return JSONResponse({"error": str(err)}, status_code=400)
+    return JSONResponse(e)
 
 
 @app.get("/api/tasks")

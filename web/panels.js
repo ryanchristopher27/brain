@@ -109,7 +109,10 @@ function renderPipeline(p) {
     cards.forEach((pr) => {
       const c = el("div", "proj");
       c.dataset.persona = ""; // reserved for future agent linkage
-      c.append(el("span", "proj-name", pr.name));
+      const head = el("div", "proj-head");
+      head.append(el("span", "proj-name", pr.name));
+      if (pr.status) head.append(el("span", "status status-" + pr.status, pr.status));
+      c.append(head);
       const badges = el("div", "badges");
       p.columns.forEach((ph) => {
         const b = el("span", "badge" + (pr.detected.includes(ph) ? " on" : ""));
