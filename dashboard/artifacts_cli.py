@@ -37,9 +37,10 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("ls")
 
-    pu = sub.add_parser("push")   # backs the /sync command
+    pu = sub.add_parser("push")   # backs the /sync command (pull-then-push)
     pu.add_argument("--message", default=None)
     pu.add_argument("--dry-run", action="store_true")
+    pu.add_argument("--no-pull", action="store_true", help="skip the pull step; push only")
 
     args = p.parse_args(argv)
 
@@ -87,13 +88,13 @@ def _push(args) -> int:
 
     if args.dry_run:
         _git("reset", "--quiet", "--", "artifacts")   # leave the tree as we found it
+        _git("fetch", "--quiet", "origin", branch)    # refresh remote-tracking ref for counts
+        behind = _git("rev-list", "--count", "HEAD..@{u}").stdout.strip() or "0"
+        ahead = _git("rev-list", "--count", "@{u}..HEAD").stdout.strip() or "0"
         print("dry-run — would:")
-        if has_changes:
-            print("  commit artifacts/ changes:")
-            print("    " + _git("status", "--short", "--", "artifacts").stdout.strip().replace("\n", "\n    "))
-        else:
-            print("  (artifacts/ unchanged — nothing to commit)")
-        ahead = _git("rev-list", "--count", "@{u}..HEAD").stdout.strip() or "?"
+        print("  commit artifacts/ changes" if has_changes else "  (artifacts/ unchanged — nothing to commit)")
+        if not args.no_pull:
+            print(f"  pull {behind} commit(s) from origin/{branch} (rebase, autostash)")
         print(f"  push {ahead} pending commit(s) → origin/{branch}")
         return 0
 
@@ -107,11 +108,26 @@ def _push(args) -> int:
     else:
         print("artifacts/ unchanged — nothing new to commit")
 
-    # 4. push the branch to origin
+    # 4. pull remote changes first (rebase keeps history linear; autostash protects any
+    #    uncommitted code). On conflict, abort cleanly and hand it back — never auto-resolve.
+    if not args.no_pull:
+        pull = _git("pull", "--rebase", "--autostash", "origin", branch)
+        if pull.returncode != 0:
+            git_dir = data.BRAIN_DIR / ".git"
+            if (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists():
+                _git("rebase", "--abort")
+                sys.exit("pull hit conflicts — local and remote diverged. Aborted the rebase to "
+                         "leave the brain repo clean; resolve manually, then re-run /sync.")
+            sys.exit(f"pull failed:\n{(pull.stderr or pull.stdout).strip()}")
+        tail = (pull.stdout + pull.stderr).strip().splitlines()
+        print("pulled: " + (tail[-1] if tail else "already up to date"))
+
+    # 5. push the branch to origin
     ahead = _git("rev-list", "--count", "@{u}..HEAD").stdout.strip() or "?"
     push = _git("push", "origin", "HEAD")
     if push.returncode != 0:
-        sys.exit(f"push failed:\n{(push.stderr or push.stdout).strip()}")
+        sys.exit(f"push failed (remote may have moved — /sync again to pull, or reconcile):\n"
+                 f"{(push.stderr or push.stdout).strip()}")
     print(f"pushed {ahead} commit(s) → origin/{branch} ✓")
     return 0
 

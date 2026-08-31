@@ -17,15 +17,21 @@ in an LLM prompt, so `/sync` is reliable and testable):
    session summaries, and marked deliverables into `brain/artifacts/<project>/`. Idempotent:
    files carry no volatile timestamps, so an unchanged project yields no diff.
 2. Stage only `artifacts/`; commit if changed (`--message` overrides the default).
-3. `git push origin HEAD` — current branch (`main`) to `origin`.
+3. `git pull --rebase --autostash origin <branch>` — incorporate remote first (linear history;
+   autostash protects uncommitted code). `--no-pull` skips this for push-only.
+4. `git push origin HEAD` — current branch (`main`) to `origin`.
 
 ## Boundaries
 
-- Stages **only** `artifacts/` — never sweeps in uncommitted code.
-- Push moves all pending branch commits to the remote (brings origin current), by design.
-- No `--force`; a rejected (non-fast-forward) push is surfaced, not overridden — the user
-  reconciles.
-- `--dry-run` previews commit + push scope without mutating anything.
+- Stages **only** `artifacts/` — never sweeps in uncommitted code (autostash preserves it across
+  the rebase).
+- Pull-then-push makes it a true two-way sync (multi-machine). Push moves all pending branch
+  commits to the remote (brings origin current), by design.
+- **Conflicts are never auto-resolved**: a conflicting rebase is aborted (clean repo restored) and
+  reported for manual resolution.
+- No `--force`; a rejected push is surfaced, not overridden — the user reconciles (re-run `/sync`).
+- `--dry-run` previews pull + commit + push scope (fetches for accurate counts) without mutating
+  the working tree or history.
 
 ## Why deterministic
 
