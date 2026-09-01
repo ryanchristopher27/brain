@@ -3,101 +3,44 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>brain · agent dashboard</title>
-  <link rel="stylesheet" href="style.css" />
+  <title>Claude Hub</title>
+  <link rel="stylesheet" href="style.css?v=2" />
 </head>
 <body>
-  <header class="topbar">
-    <h1>brain <span>· agent dashboard</span></h1>
-    <div id="conn" class="conn" data-ok="false">offline</div>
-  </header>
+  <div class="app">
+    <!-- ── left rail ── -->
+    <aside class="rail">
+      <div class="brand"><span class="sq"></span><span class="name">CLAUDE HUB</span></div>
+      <div class="acct">
+        <div class="ws" id="ws-name">brain workspace</div>
+        <div class="plan">Max plan · 4 seats</div>
+      </div>
+      <nav class="nav" id="nav"></nav>
+      <div class="foot">
+        <div class="lim"><span>WEEKLY LIMIT</span><span id="wk-pct">—</span></div>
+        <div class="track"><i id="wk-bar" style="width:0%"></i></div>
+        <div class="whisper"><span class="g" id="voice-dot"></span><span id="voice-lbl">voice core</span></div>
+      </div>
+    </aside>
 
-  <main class="grid">
-    <!-- Active session: the C2 orb, absorbed as one tile -->
-    <section class="panel session">
-      <h2>active session</h2>
-      <div class="session-body">
-        <div id="orb" class="orb" data-state="idle" aria-hidden="true"></div>
-        <div class="session-meta">
-          <p id="state" class="state">idle</p>
-          <p id="persona" class="persona"></p>
+    <!-- ── main ── -->
+    <div class="main">
+      <header class="header">
+        <div class="htext">
+          <h1 id="view-title">Overview</h1>
+          <div class="sub" id="view-sub"></div>
         </div>
-      </div>
-      <div id="log" class="log" aria-live="polite"></div>
-    </section>
-
-    <!-- Work pipeline: ideas progressing brainstorm → … → reflect (the second axis) -->
-    <section class="panel board-panel">
-      <h2>work pipeline</h2>
-      <div id="pipeline" class="board"><p class="empty">loading…</p></div>
-    </section>
-
-    <!-- Task tracker: Kanban by status + create + detail (git-versioned .brain/tasks/) -->
-    <section class="panel board-panel tasks-panel">
-      <h2>tasks <span id="tasks-count" class="count"></span></h2>
-      <div class="task-controls">
-        <select id="task-filter" aria-label="filter by project"><option value="">all projects</option></select>
-        <button id="task-new-btn" type="button">+ new task</button>
-      </div>
-      <form id="task-new-form" class="task-new" hidden>
-        <select id="nt-project" aria-label="project"></select>
-        <input id="nt-title" type="text" placeholder="task title…" />
-        <select id="nt-type" aria-label="type"><option>task</option><option>issue</option><option>bug</option></select>
-        <input id="nt-dir" type="text" placeholder="scoped dir (default .)" />
-        <input id="nt-brief" type="text" placeholder="brief (optional)…" />
-        <button id="nt-create" type="submit">create</button>
-        <span id="nt-msg" class="run-msg"></span>
-      </form>
-      <div id="task-board" class="board"><p class="empty">loading…</p></div>
-      <div id="task-detail" class="task-detail" hidden></div>
-    </section>
-
-    <!-- Agent runs: spawn/propose/approve/stop + live activity + cost -->
-    <section class="panel runs-panel">
-      <h2>agent runs <span id="runs-totals" class="count"></span></h2>
-      <div class="run-controls">
-        <select id="run-persona" aria-label="persona"></select>
-        <input id="run-task" type="text" placeholder="task for the agent…" />
-        <input id="run-dir" type="text" placeholder="scoped dir (required for writers)" />
-        <button id="run-go" type="button">run</button>
-        <span id="run-msg" class="run-msg"></span>
-      </div>
-      <div id="queued" class="queued"></div>
-      <div id="pending" class="pending"></div>
-      <div class="runs-cols">
-        <div>
-          <div class="sub">recent runs</div>
-          <div id="runs" class="rows"><p class="empty">no runs yet — spawn one above</p></div>
+        <div class="spacer"></div>
+        <div class="search">
+          <span class="slash">/</span>
+          <input id="search" type="text" placeholder="Search projects, chats, artifacts" />
         </div>
-        <div>
-          <div class="sub">live activity</div>
-          <div id="activity" class="activity"><p class="empty">no activity yet</p></div>
-        </div>
-      </div>
-    </section>
+        <button class="btn-primary" id="talk-btn">Talk to Claude Code</button>
+      </header>
+      <main class="pane" id="pane"><p class="empty">loading…</p></main>
+    </div>
+  </div>
 
-    <section class="panel">
-      <h2>agents <span id="agents-count" class="count"></span></h2>
-      <div id="agents" class="cards"><p class="empty">loading…</p></div>
-    </section>
-
-    <section class="panel">
-      <h2>background jobs</h2>
-      <div id="jobs" class="rows"><p class="empty">loading…</p></div>
-    </section>
-
-    <section class="panel half">
-      <h2>schedule</h2>
-      <div id="schedule" class="rows"><p class="empty">loading…</p></div>
-    </section>
-
-    <section class="panel half">
-      <h2>fleet health</h2>
-      <div id="health" class="rows"><p class="empty">loading…</p></div>
-    </section>
-  </main>
-
-  <script src="app.js"></script>
-  <script src="panels.js"></script>
+  <script src="hub.js?v=2"></script>
 </body>
 </html>

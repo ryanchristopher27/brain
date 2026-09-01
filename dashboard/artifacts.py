@@ -134,6 +134,34 @@ def mark(project: str, file: str, note: str = "") -> dict:
     return {"project": project, "file": src.name, "dest": str(dest / src.name)}
 
 
+def _iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def list_items() -> list[dict]:
+    """Flat list of archived artifacts for the dashboard's Artifacts view, newest first."""
+    items: list[dict] = []
+    if not ARTIFACTS_DIR.is_dir():
+        return items
+    for sub in sorted(p for p in ARTIFACTS_DIR.iterdir() if p.is_dir()):
+        project = sub.name
+        for kind, folder in (("doc", "docs"), ("task", "tasks"), ("deliverable", "deliverables")):
+            d = sub / folder
+            if d.is_dir():
+                for f in sorted(d.glob("*.md")):
+                    if f.name.startswith("_"):
+                        continue
+                    st = f.stat()
+                    items.append({"name": f.stem, "kind": kind, "project": project,
+                                  "modified": _iso(st.st_mtime), "size": st.st_size})
+        sess = sub / "sessions.md"
+        if sess.exists():
+            items.append({"name": "session summaries", "kind": "sessions", "project": project,
+                          "modified": _iso(sess.stat().st_mtime), "size": sess.stat().st_size})
+    items.sort(key=lambda x: x["modified"], reverse=True)
+    return items
+
+
 def sync_all() -> list[dict]:
     results = [sync_project(m["name"], m["root"]) for m in data._projects_meta()]
     write_catalog()

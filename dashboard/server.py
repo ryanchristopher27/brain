@@ -249,6 +249,23 @@ async def tasks():
     return JSONResponse(tracker.all_tasks())
 
 
+@app.get("/api/artifacts")
+async def artifacts_list():
+    from . import artifacts as artifacts_mod
+    return JSONResponse({"items": artifacts_mod.list_items()})
+
+
+@app.get("/api/usage")
+async def usage():
+    try:
+        conn = registry.open_db()
+        t = registry.totals(conn)
+        conn.close()
+        return JSONResponse({"run_count": t.get("runs", 0), "run_cost": t.get("cost_usd", 0.0)})
+    except Exception:
+        return JSONResponse({"run_count": 0, "run_cost": 0.0})
+
+
 class TaskCreate(BaseModel):
     project: str
     title: str
