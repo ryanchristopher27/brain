@@ -425,7 +425,7 @@ RENDER.connectors = async (pane) => {
   const vgrid = el("div", "conn-grid");
   vgrid.append(voiceCard("Wispr Flow", "ACTIVE", "var(--green)",
     "System-wide AI dictation — types into the focused app (Claude Code, chat, anywhere). External app, no live status.",
-    "double-tap Caps Lock"));
+    "hold Fn"));
   const dLive = health.voice_connected;
   vgrid.append(voiceCard("Local voice daemon", dLive ? "RUNNING" : "OFF", dLive ? "var(--green)" : "var(--faint)",
     "Local Whisper → claude -p → speech, with the live dashboard visualization. Optional — run `python -m voice.daemon`.",
@@ -603,7 +603,7 @@ function setVoiceMode(mode) {
   const mic = dockEl && dockEl.querySelector(".nucleus.mic");
   if (mic) mic.style.cursor = mode === "daemon" ? "pointer" : "default";
   if (tickerEl) tickerEl.textContent = mode === "wispr"
-    ? "Wispr Flow — double-tap Caps Lock to dictate into the focused app"
+    ? "Wispr Flow — hold Fn to dictate into the focused app"
     : "click the orb or hold Space (on Command) to talk to the local daemon";
   setVoice(voiceState);
 }
@@ -619,7 +619,7 @@ function setVoice(state) {
   if (wispr || state !== "listening") { levels = levels.map(() => 0.2); setDockLive(false); }
   if (dockEl && dockEl._meta) {
     const w = dockEl._meta.querySelector(".w"), h = dockEl._meta.querySelector(".h");
-    if (wispr) { w.textContent = "WISPR FLOW · DICTATION"; h.textContent = "double-tap Caps Lock"; }
+    if (wispr) { w.textContent = "WISPR FLOW · DICTATION"; h.textContent = "hold Fn to dictate"; }
     else { w.textContent = connected ? `LOCAL DAEMON · ${state === "listening" ? "LISTENING" : "READY"}` : "LOCAL DAEMON · OFF"; h.textContent = "click or hold Space"; }
   }
   renderTranscript();
