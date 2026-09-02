@@ -261,6 +261,11 @@ button { font-family: inherit; cursor: pointer; }
 .dock .drawer-btn { border: 1px solid var(--v-bd); background: var(--v2); color: var(--v-tx2);
   border-radius: 6px; padding: 8px 12px; font-family: var(--mono); font-size: 9.5px; }
 .dock .drawer-btn:hover { background: var(--v1); }
+.dock .vtoggle { display: inline-flex; border: 1px solid var(--bd3); border-radius: 7px; overflow: hidden; flex: none; }
+.dock .vtoggle button { background: transparent; border: 0; color: var(--faint); font-family: var(--mono);
+  font-size: 9px; letter-spacing: 0.08em; padding: 7px 10px; }
+.dock .vtoggle button.on { background: var(--v2); color: var(--v-tx2); }
+.dock .vtoggle button:not(.on):hover { background: var(--raised); color: var(--tx3); }
 
 /* ── transcript drawer (Command) ────────────────────────────────────────── */
 .drawer { display: grid; grid-template-columns: 1fr 1.15fr; gap: 12px; height: 320px; margin-top: 26px; }

@@ -547,8 +547,8 @@ function renderTranscript() {
 function buildDock() {
   dockEl = el("div", "dock");
   const mic = nucleus("mic");
-  mic.onclick = () => sendCmd("record_toggle");
-  mic.title = "click to toggle recording · or hold Space on this view";
+  mic.onclick = () => { if (voiceMode === "daemon") sendCmd("record_toggle"); };
+  mic.title = "in Daemon mode: click to toggle recording, or hold Space on this view";
   starfield = el("div", "starfield");
   starfield.append(el("div", "axis"));
   for (let i = 0; i < 30; i++) {
@@ -560,14 +560,20 @@ function buildDock() {
   starfield.append(tickerEl);
   const rmeta = el("div", "rmeta");
   rmeta.append(el("div", "w", "LOCAL DAEMON · READY"), el("div", "h", "click or hold Space · Wispr Flow for typing"));
+  const vtoggle = el("div", "vtoggle");
+  [["wispr", "WISPR"], ["daemon", "DAEMON"]].forEach(([m, label]) => {
+    const b = el("button", voiceMode === m ? "on" : "", label);
+    b.dataset.mode = m; b.onclick = () => setVoiceMode(m);
+    vtoggle.append(b);
+  });
   const drawerBtn = el("button", "drawer-btn", drawerOpen ? "HIDE ▾" : "TRANSCRIPT ▴");
   drawerBtnEl = drawerBtn;
   drawerBtn.onclick = toggleDrawer;
-  dockEl.append(mic, starfield, rmeta, drawerBtn);
+  dockEl.append(mic, starfield, rmeta, vtoggle, drawerBtn);
   dockEl._meta = rmeta;
   return dockEl;
 }
-function wireDock() { setDockLive(voiceState === "listening"); }
+function wireDock() { setVoiceMode(voiceMode); setDockLive(voiceMode === "daemon" && voiceState === "listening"); }
 function setDockLive(live) {
   NUCLEI.forEach((n) => (n.dataset.live = String(live)));
   if (!starfield) return;
@@ -587,16 +593,34 @@ function setDockLive(live) {
 // ── voice websocket (state + rail dot + nucleus + ticker) ────────────────────
 let voiceState = "idle";
 let levels = Array(30).fill(0.2);
+let voiceMode = "wispr";  // "wispr" | "daemon" — which voice source the dashboard drives
+try { voiceMode = localStorage.getItem("voiceMode") || "wispr"; } catch {}
+
+function setVoiceMode(mode) {
+  voiceMode = mode;
+  try { localStorage.setItem("voiceMode", mode); } catch {}
+  if (dockEl) dockEl.querySelectorAll(".vtoggle button").forEach((b) => b.classList.toggle("on", b.dataset.mode === mode));
+  const mic = dockEl && dockEl.querySelector(".nucleus.mic");
+  if (mic) mic.style.cursor = mode === "daemon" ? "pointer" : "default";
+  if (tickerEl) tickerEl.textContent = mode === "wispr"
+    ? "Wispr Flow — double-tap Caps Lock to dictate into the focused app"
+    : "click the orb or hold Space (on Command) to talk to the local daemon";
+  setVoice(voiceState);
+}
+
 function setVoice(state) {
   voiceState = state;
   const dot = $("#voice-dot"), lbl = $("#voice-lbl");
   const connected = state !== "offline";
-  dot.style.background = connected ? "var(--green)" : "var(--faint)";
-  lbl.textContent = connected ? `local daemon · ${state}` : "local daemon · off";
-  NUCLEI.forEach((n) => (n.dataset.live = String(state === "listening")));
-  if (state !== "listening") { levels = levels.map(() => 0.2); setDockLive(false); }
+  const wispr = voiceMode === "wispr";
+  dot.style.background = wispr ? "var(--green)" : (connected ? "var(--green)" : "var(--faint)");
+  lbl.textContent = wispr ? "Wispr Flow · dictation" : (connected ? `local daemon · ${state}` : "local daemon · off");
+  NUCLEI.forEach((n) => (n.dataset.live = String(!wispr && state === "listening")));
+  if (wispr || state !== "listening") { levels = levels.map(() => 0.2); setDockLive(false); }
   if (dockEl && dockEl._meta) {
-    dockEl._meta.querySelector(".w").textContent = connected ? `LOCAL DAEMON · ${state === "listening" ? "LISTENING" : "READY"}` : "LOCAL DAEMON · OFF";
+    const w = dockEl._meta.querySelector(".w"), h = dockEl._meta.querySelector(".h");
+    if (wispr) { w.textContent = "WISPR FLOW · DICTATION"; h.textContent = "double-tap Caps Lock"; }
+    else { w.textContent = connected ? `LOCAL DAEMON · ${state === "listening" ? "LISTENING" : "READY"}` : "LOCAL DAEMON · OFF"; h.textContent = "click or hold Space"; }
   }
   renderTranscript();
 }
@@ -625,7 +649,7 @@ function onEvt(evt) {
     case "state": setVoice(evt.value); break;
     case "level":
       levels.shift(); levels.push(Math.max(0, Math.min(1, Number(evt.value) || 0)));
-      if (voiceState === "listening") setDockLive(true);
+      if (voiceMode === "daemon" && voiceState === "listening") setDockLive(true);
       break;
     case "transcript":
       if (evt.text) {
@@ -653,7 +677,7 @@ async function refreshCounts() {
 $("#talk-btn").onclick = () => go("command");
 let spaceHeld = false;
 document.addEventListener("keydown", (e) => {
-  if (e.code === "Space" && current === "command" && !/input|textarea/i.test(document.activeElement.tagName)) {
+  if (e.code === "Space" && voiceMode === "daemon" && current === "command" && !/input|textarea/i.test(document.activeElement.tagName)) {
     e.preventDefault();
     if (!e.repeat && !spaceHeld) { spaceHeld = true; sendCmd("record_start"); }
   }
