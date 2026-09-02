@@ -194,18 +194,23 @@ function activityBars(tasks) {
   return wrap;
 }
 
+let projectsFilter = "all";
 RENDER.projects = async (pane) => {
-  const projects = await api("/api/projects");
+  const all = await api("/api/projects");
   pane.innerHTML = "";
   const chips = el("div", "chips");
-  ["All projects", "Active", "Shipped", "Archived"].forEach((c, i) => {
-    const ch = el("span", "chip" + (i === 0 ? " on" : ""), c); chips.append(ch);
+  [["all", "All projects"], ["active", "Active"], ["shipped", "Shipped"], ["archived", "Archived"]].forEach(([key, label]) => {
+    const ch = el("span", "chip" + (projectsFilter === key ? " on" : ""), label);
+    ch.onclick = () => { projectsFilter = key; RENDER.projects(pane); };
+    chips.append(ch);
   });
   pane.append(chips);
+  const projects = projectsFilter === "all" ? all : all.filter((p) => p.status === projectsFilter);
   const card = el("div", "card"); card.style.overflow = "hidden";
   const tbl = el("table", "tbl");
   tbl.innerHTML = "<thead><tr><th>PROJECT</th><th>PHASE</th><th>REPO</th><th>TASKS</th><th>STATUS</th></tr></thead>";
   const tb = el("tbody");
+  if (!projects.length) { const tr = el("tr"); const c = el("td", "empty", "no projects match"); c.colSpan = 5; tr.append(c); tb.append(tr); }
   projects.forEach((p) => {
     const tr = el("tr");
     const nameTd = el("td"); const nm = el("div", "pname"); nm.append(pdot(p.name), el("span", null, p.name)); nameTd.append(nm);
@@ -284,11 +289,21 @@ function taskCard(t, pane) {
   return c;
 }
 
+let artifactsFilter = "all";
 RENDER.artifacts = async (pane) => {
   const data = await api("/api/artifacts").catch(() => ({ items: [] }));
   pane.innerHTML = "";
-  const items = data.items || [];
-  $("#view-sub").textContent = `${items.length} artifacts · docs, tasks, sessions and deliverables`;
+  const all = data.items || [];
+  $("#view-sub").textContent = `${all.length} artifacts · docs, tasks, sessions and deliverables`;
+  const kinds = ["all", ...Array.from(new Set(all.map((a) => a.kind)))];
+  const chips = el("div", "chips");
+  kinds.forEach((k) => {
+    const ch = el("span", "chip" + (artifactsFilter === k ? " on" : ""), k === "all" ? "All" : k.endsWith("s") ? k : k + "s");
+    ch.onclick = () => { artifactsFilter = k; RENDER.artifacts(pane); };
+    chips.append(ch);
+  });
+  pane.append(chips);
+  const items = artifactsFilter === "all" ? all : all.filter((a) => a.kind === artifactsFilter);
   const grid = el("div", "art-grid");
   items.forEach((a) => {
     const c = el("div", "card art-card int");
@@ -377,9 +392,11 @@ RENDER.command = async (pane) => {
   if (!runList.length) { const tr = el("tr"); const c = el("td", "empty", "no runs yet"); c.colSpan = 4; tr.append(c); tb.append(tr); }
   tbl.append(tb); card.append(tbl); pane.append(card);
 
-  // voice dock
+  // transcript drawer (closed by default) + voice dock
+  pane.append(buildDrawer());
   pane.append(buildDock());
   wireDock();
+  renderTranscript();
 };
 
 RENDER.connectors = async (pane) => {
@@ -449,6 +466,53 @@ function nucleus(kind) {
 }
 const NUCLEI = [];
 let dockEl = null, starfield = null, tickerEl = null, spokenWords = [];
+let drawerEl = null, drawerOpen = false, drawerBtnEl = null;
+let dictatedEl = null, hintEl = null, ccBodyEl = null, tPanelEl = null;
+let dictated = [], ccLines = [];
+
+function buildDrawer() {
+  drawerEl = el("div", "drawer" + (drawerOpen ? "" : " closed"));
+  // left: transcript
+  tPanelEl = el("div", "tpanel"); tPanelEl.dataset.live = "false";
+  const th = el("div", "th");
+  th.append(el("span", "micd"), el("span", "lbl", "TRANSCRIPT"));
+  const rs = el("span", "rs", "IDLE"); th.append(rs);
+  const tb = el("div", "tb");
+  dictatedEl = el("div", "dictated", "");
+  hintEl = el("div", "hint", "Nothing captured yet…");
+  tb.append(dictatedEl, hintEl);
+  const tf = el("div", "tf");
+  ["run the tests", "undo that", "open the board"].forEach((c) => tf.append(el("span", "ex", `"${c}"`)));
+  tPanelEl.append(th, tb, tf);
+  tPanelEl._rs = rs;
+  // right: claude code
+  const cc = el("div", "tpanel cc");
+  const cth = el("div", "th");
+  cth.append(el("span", "path", "~/Desktop/Code/brain"), el("span", "model", "sonnet"));
+  ccBodyEl = el("div", "tb");
+  cc.append(cth, ccBodyEl);
+  drawerEl.append(tPanelEl, cc);
+  return drawerEl;
+}
+function toggleDrawer() {
+  drawerOpen = !drawerOpen;
+  if (drawerEl) drawerEl.classList.toggle("closed", !drawerOpen);
+  if (drawerBtnEl) drawerBtnEl.textContent = drawerOpen ? "HIDE ▾" : "TRANSCRIPT ▴";
+}
+function renderTranscript() {
+  if (dictatedEl) dictatedEl.textContent = dictated.join(" ");
+  if (hintEl) {
+    hintEl.textContent = voiceState === "listening"
+      ? "Listening…" : dictated.length ? `Sent · ${dictated.length} words` : "Nothing captured yet…";
+  }
+  if (tPanelEl) { tPanelEl.dataset.live = String(voiceState === "listening"); tPanelEl._rs.textContent = voiceState === "listening" ? "RECORDING" : "IDLE"; }
+  if (ccBodyEl) {
+    ccBodyEl.innerHTML = "";
+    if (!ccLines.length) { ccBodyEl.append(el("div", "l-idle", "idle — waiting for Claude Code output")); }
+    else ccLines.slice(-40).forEach((l) => ccBodyEl.append(el("div", "l-prose", l)));
+    ccBodyEl.scrollTop = ccBodyEl.scrollHeight;
+  }
+}
 function buildDock() {
   dockEl = el("div", "dock");
   const mic = nucleus("mic"); mic.onclick = () => {};
@@ -463,8 +527,11 @@ function buildDock() {
   starfield.append(tickerEl);
   const rmeta = el("div", "rmeta");
   rmeta.append(el("div", "w", "VOICE CORE · READY"), el("div", "h", "Hold Space to talk"));
-  const drawerBtn = el("button", "drawer-btn", "TRANSCRIPT ▴");
+  const drawerBtn = el("button", "drawer-btn", drawerOpen ? "HIDE ▾" : "TRANSCRIPT ▴");
+  drawerBtnEl = drawerBtn;
+  drawerBtn.onclick = toggleDrawer;
   dockEl.append(mic, starfield, rmeta, drawerBtn);
+  dockEl._meta = rmeta;
   return dockEl;
 }
 function wireDock() { setDockLive(voiceState === "listening"); }
@@ -495,6 +562,10 @@ function setVoice(state) {
   lbl.textContent = connected ? `voice · ${state}` : "voice offline";
   NUCLEI.forEach((n) => (n.dataset.live = String(state === "listening")));
   if (state !== "listening") { levels = levels.map(() => 0.2); setDockLive(false); }
+  if (dockEl && dockEl._meta) {
+    dockEl._meta.querySelector(".w").textContent = connected ? `VOICE CORE · ${state === "listening" ? "LISTENING" : "READY"}` : "VOICE CORE · OFFLINE";
+  }
+  renderTranscript();
 }
 async function resolveWs() {
   try {
@@ -519,7 +590,15 @@ function onEvt(evt) {
       if (voiceState === "listening") setDockLive(true);
       break;
     case "transcript":
-      if (evt.role === "user" && tickerEl) { spokenWords = (evt.text || "").split(/\s+/).slice(-9); tickerEl.textContent = spokenWords.join(" "); }
+      if (evt.text) {
+        if (evt.role === "assistant") ccLines.push(evt.text);
+        else {
+          dictated.push(evt.text);
+          spokenWords = evt.text.split(/\s+/).slice(-9);
+          if (tickerEl) tickerEl.textContent = spokenWords.join(" ");
+        }
+        renderTranscript();
+      }
       break;
     default: break;
   }

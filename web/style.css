@@ -87,7 +87,7 @@ button { font-family: inherit; cursor: pointer; }
   font-family: var(--ui); font-size: 12.5px; }
 .search input::placeholder { color: var(--faint); }
 .btn-primary { background: var(--accent); color: #F4F0FF; border: 0; border-radius: 7px;
-  padding: 8px 14px; font-size: 12.5px; font-weight: 600; }
+  padding: 8px 14px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
 .btn-primary:hover { filter: brightness(1.18); }
 .pane { flex: 1; overflow-y: auto; padding: var(--pad) 26px 34px; }
 
@@ -253,6 +253,29 @@ button { font-family: inherit; cursor: pointer; }
 .dock .drawer-btn { border: 1px solid var(--v-bd); background: var(--v2); color: var(--v-tx2);
   border-radius: 6px; padding: 8px 12px; font-family: var(--mono); font-size: 9.5px; }
 .dock .drawer-btn:hover { background: var(--v1); }
+
+/* ── transcript drawer (Command) ────────────────────────────────────────── */
+.drawer { display: grid; grid-template-columns: 1fr 1.15fr; gap: 12px; height: 320px; margin-top: 26px; }
+.drawer.closed { display: none; }
+.tpanel { border: 1px solid var(--bd); border-radius: 10px; background: var(--card); display: flex; flex-direction: column; overflow: hidden; }
+.tpanel .th { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--divider); }
+.tpanel .th .micd { width: 8px; height: 8px; border-radius: 50%; background: var(--bd-hover); }
+.tpanel[data-live="true"] .th .micd { background: var(--accent); }
+.tpanel .th .lbl { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; color: var(--muted); }
+.tpanel .th .rs { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+.tpanel .tb { flex: 1; overflow-y: auto; padding: 14px; }
+.tpanel .dictated { font-size: 15px; line-height: 1.65; color: var(--tx1); }
+.tpanel[data-live="true"] .dictated::after { content: "▍"; color: var(--accent); }
+.tpanel .hint { font-family: var(--mono); font-size: 11px; color: var(--faint2); margin-top: 10px; }
+.tpanel .tf { padding: 10px 14px; border-top: 1px solid var(--divider); display: flex; gap: 8px; flex-wrap: wrap; }
+.tpanel .ex { font-family: var(--mono); font-size: 10px; color: var(--tx3); border: 1px solid var(--bd2);
+  border-radius: 6px; padding: 4px 9px; }
+.cc { background: var(--term); }
+.cc .th .path { font-family: var(--mono); font-size: 11px; color: var(--tx2); }
+.cc .th .model { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--green); }
+.cc .tb { font-family: var(--mono); font-size: 11.5px; line-height: 1.75; }
+.cc .l-cmd { color: #9C7BF0; } .cc .l-read { color: #7E7870; } .cc .l-edit { color: var(--green); }
+.cc .l-prose { color: var(--tx1); } .cc .l-idle { color: #4E4A44; }
 
 /* the living nucleus */
 .nucleus { position: relative; border-radius: 50%; flex: none; }
