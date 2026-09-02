@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #100F0D; }
+  a { color: #9C7BF0; text-decoration: none; }
+  a:hover { color: #BCA4FF; }
+  input, button { font-family: inherit; }
+  input:focus { outline: none; }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: #2E2B27; border-radius: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  @keyframes om-spin { to { transform: rotate(360deg); } }
+  @keyframes om-spin-slow { to { transform: rotate(-360deg); } }
+  @keyframes om-breathe { 0%, 100% { transform: scale(1); opacity: 0.85; } 50% { transform: scale(1.09); opacity: 1; } }
+  @keyframes om-wobble {
+    0%, 100% { border-radius: 52% 48% 46% 54% / 50% 46% 54% 50%; transform: rotate(0deg) scale(1); }
+    25% { border-radius: 46% 54% 52% 48% / 54% 52% 48% 46%; transform: rotate(3deg) scale(1.02); }
+    50% { border-radius: 50% 50% 54% 46% / 46% 54% 46% 54%; transform: rotate(-2deg) scale(0.985); }
+    75% { border-radius: 54% 46% 48% 52% / 52% 48% 52% 48%; transform: rotate(2deg) scale(1.015); }
+  }
+  @keyframes om-ripple { 0% { transform: scale(0.86); opacity: 0.55; } 70% { opacity: 0; } 100% { transform: scale(1.55); opacity: 0; } }
+  @keyframes om-nucleus { 0%, 100% { transform: scale(1) translate(0, 0); } 33% { transform: scale(1.12) translate(0.6px, -0.8px); } 66% { transform: scale(0.94) translate(-0.7px, 0.5px); } }
+  @keyframes om-cilia { 0%, 100% { opacity: 0.25; } 50% { opacity: 0.75; } }
+</style>
+</helmet>
+<div style="--accent: #6D4AC4; --pad: 20px; display: flex; height: 100vh; min-height: 760px; background: #100F0D; color: #E8E4DC; font-family: Archivo, Helvetica, sans-serif; font-size: 14px; letter-spacing: -0.01em;">
+
+  <aside style="width: 232px; flex: none; border-right: 1px solid #262320; display: flex; flex-direction: column; background: #141310;">
+    <div style="padding: 20px 18px 16px; display: flex; align-items: center; gap: 10px;">
+      <div style="width: 22px; height: 22px; border-radius: 5px; background: var(--accent, #6D4AC4);"></div>
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700; letter-spacing: 0.14em;">CLAUDE&nbsp;HUB</div>
+    </div>
+
+    <div style="padding: 0 12px 14px;">
+      <div style="border: 1px solid #262320; border-radius: 8px; padding: 10px 11px; background: #191714;">
+        <div style="font-size: 12.5px; font-weight: 600;">{{ orgName }}</div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: #8B857A; margin-top: 3px;">Max plan · 4 seats</div>
+      </div>
+    </div>
+
+    <nav style="flex: 1; overflow-y: auto; padding: 4px 10px 10px; display: flex; flex-direction: column; gap: 2px;">
+      <sc-for list="{{ nav }}" as="item" hint-placeholder-count="9">
+        <div style="display: contents">
+          <sc-if value="{{ item.isLabel }}" hint-placeholder-val="{{ false }}">
+            <div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: 0.16em; color: #6E6860; padding: 14px 8px 6px;">{{ item.label }}</div>
+          </sc-if>
+          <sc-if value="{{ item.isItem }}" hint-placeholder-val="{{ true }}">
+            <button onClick="{{ item.go }}" style="display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; cursor: pointer; padding: 8px 9px; border-radius: 7px; font-size: 13px; font-weight: 500; background: {{ item.bg }}; color: {{ item.fg }};" style-hover="background: #201E1A;">
+              <span style="width: 6px; height: 6px; border-radius: 2px; flex: none; background: {{ item.dot }};"></span>
+              <span style="flex: 1;">{{ item.label }}</span>
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #6E6860;">{{ item.meta }}</span>
+            </button>
+          </sc-if>
+        </div>
+      </sc-for>
+    </nav>
+
+    <div style="border-top: 1px solid #262320; padding: 14px 16px 16px;">
+      <div style="display: flex; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8B857A; margin-bottom: 7px;">
+        <span>WEEKLY LIMIT</span><span>{{ limitPct }}%</span>
+      </div>
+      <div style="height: 5px; border-radius: 3px; background: #262320; overflow: hidden;">
+        <div style="height: 100%; width: {{ limitPct }}%; background: var(--accent, #6D4AC4);"></div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 7px; margin-top: 14px;">
+        <span style="width: 6px; height: 6px; border-radius: 50%; background: #6B9E72;"></span>
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8B857A;">Whisper Flow connected</span>
+      </div>
+    </div>
+  </aside>
+
+  <main style="flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;">
+    <header style="flex: none; border-bottom: 1px solid #262320; padding: 18px 26px 16px; display: flex; align-items: flex-end; gap: 24px; background: #141310;">
+      <div style="flex: 1; min-width: 0;">
+        <h1 style="margin: 0; font-size: 21px; font-weight: 600; letter-spacing: -0.02em;">{{ title }}</h1>
+        <div style="font-size: 12.5px; color: #8B857A; margin-top: 4px;">{{ subtitle }}</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 8px; border: 1px solid #262320; background: #191714; border-radius: 7px; padding: 7px 11px; width: 250px;">
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #6E6860;">/</span>
+          <input placeholder="Search projects, chats, artifacts" style="border: 0; background: transparent; color: #E8E4DC; font-size: 12.5px; width: 100%;" />
+        </div>
+        <button onClick="{{ goVoice }}" style="border: 0; cursor: pointer; border-radius: 7px; padding: 8px 14px; font-size: 12.5px; font-weight: 600; background: var(--accent, #6D4AC4); color: #F4F0FF;" style-hover="filter: brightness(1.18);">Talk to Claude Code</button>
+      </div>
+    </header>
+
+    <div style="flex: 1; overflow-y: auto; padding: var(--pad, 20px) 26px 34px;">
+
+      <sc-if value="{{ isOverview }}" hint-placeholder-val="{{ true }}">
+        <div>
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
+            <sc-for list="{{ tiles }}" as="t" hint-placeholder-count="4">
+              <div style="border: 1px solid #262320; border-radius: 10px; padding: 15px 16px 14px; background: #17150F;">
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: 0.14em; color: #8B857A;">{{ t.label }}</div>
+                <div style="font-size: 27px; font-weight: 600; margin-top: 9px; letter-spacing: -0.03em; font-family: 'JetBrains Mono', monospace;">{{ t.value }}</div>
+                <div style="font-size: 11.5px; margin-top: 5px; color: {{ t.deltaColor }};">{{ t.delta }}</div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display: flex; align-items: baseline; justify-content: space-between; margin: 26px 0 11px;">
+            <h2 style="margin: 0; font-size: 13px; font-weight: 600; letter-spacing: 0.02em;">Pick up where you left off</h2>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #6E6860;">3 OPEN SESSIONS</span>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
+            <sc-for list="{{ sessions }}" as="s" hint-placeholder-count="3">
+              <div style="border: 1px solid #262320; border-radius: 10px; padding: 15px 16px; background: #17150F; display: flex; flex-direction: column; gap: 10px;" style-hover="border-color: #3A352E;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="width: 7px; height: 7px; border-radius: 2px; background: {{ s.color }};"></span>
+                  <span style="font-size: 13px; font-weight: 600;">{{ s.project }}</span>
+                  <span style="margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #6E6860;">{{ s.ago }}</span>
+                </div>
+                <div style="font-size: 12.5px; color: #A9A398; line-height: 1.5; text-wrap: pretty;">{{ s.snippet }}</div>
+                <div style="display: flex; gap: 8px; margin-top: 2px;">
+                  <button onClick="{{ goVoice }}" style="border: 1px solid #3A352E; background: #201E1A; color: #E8E4DC; cursor: pointer; border-radius: 6px; padding: 6px 11px; font-size: 11.5px; font-weight: 600;" style-hover="background: #2A2723;">Resume</button>
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: #6E6860; align-self: center;">{{ s.surface }}</span>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px; margin-top: 24px;">
+            <div style="border: 1px solid #262320; border-radius: 10px; padding: 16px 18px 14px; background: #17150F;">
+              <div style="display: flex; align-items: baseline; justify-content: space-between;">
+                <h2 style="margin: 0; font-size: 13px; font-weight: 600;">Tokens, last 14 days</h2>
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #6E6860;">PEAK 2.1M</span>
+              </div>
+              <div style="display: flex; align-items: flex-end; gap: 6px; height: 132px; margin-top: 18px;">
+                <sc-for list="{{ chart }}" as="c" hint-placeholder-count="14">
+                  <div style="flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 7px; height: 100%;">
+                    <div style="height: {{ c.h }}%; border-radius: 3px 3px 0 0; background: {{ c.color }};" style-hover="filter: brightness(1.3);"></div>
+                    <div style="font-family: 'JetBrains Mono', monospace; font-size: 8.5px; color: #605B54; text-align: center;">{{ c.day }}</div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="border: 1px solid #262320; border-radius: 10px; padding: 16px 18px; background: #17150F;">
+              <h2 style="margin: 0 0 12px; font-size: 13px; font-weight: 600;">Recent artifacts</h2>
+              <div style="display: flex; flex-direction: column;">
+                <sc-for list="{{ recentArtifacts }}" as="a" hint-placeholder-count="5">
+                  <div style="display: flex; align-items: center; gap: 11px; padding: 9px 0; border-bottom: 1px solid #201E1A;">
+                    <div style="width: 30px; height: 24px; flex: none; border-radius: 4px; border: 1px solid #302C27; background: repeating-linear-gradient(135deg, #201E1A 0 4px, #262320 4px 8px);"></div>
+                    <div style="flex: 1; min-width: 0;">
+                      <div style="font-size: 12.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ a.name }}</div>
+                      <div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: #6E6860; margin-top: 2px;">{{ a.kind }} · {{ a.project }}</div>
+                    </div>
+                    <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #6E6860;">{{ a.ago }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isProjects }}" hint-placeholder-val="{{ false }}">
+        <div>
+          <div style="display: flex; gap: 7px; margin-bottom: 14px;">
+            <sc-for list="{{ filters }}" as="f" hint-placeholder-count="4">
+              <div style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; padding: 6px 11px; border-radius: 20px; border: 1px solid #2E2B27; color: #A9A398; background: #191714;">{{ f }}</div>
+            </sc-for>
+          </div>
+          <div style="border: 1px solid #262320; border-radius: 10px; overflow: hidden; background: #17150F;">
+            <div style="display: grid; grid-template-columns: 2.2fr 1fr 1.5fr 0.7fr 0.9fr 1fr 0.9fr; gap: 12px; padding: 10px 18px; background: #191714; border-bottom: 1px solid #262320; font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: 0.12em; color: #8B857A;">
+              <div>PROJECT</div><div>KIND</div><div>REPO</div><div>ARTIF.</div><div>TOKENS</div><div>LAST ACTIVE</div><div>STATUS</div>
+            </div>
+            <sc-for list="{{ projects }}" as="p" hint-placeholder-count="8">
+              <div style="display: grid; grid-template-columns: 2.2fr 1fr 1.5fr 0.7fr 0.9fr 1fr 0.9fr; gap: 12px; padding: 13px 18px; border-bottom: 1px solid #201E1A; align-items: center; cursor: pointer;" style-hover="background: #1C1A16;">
+                <div style="display: flex; align-items: center; gap: 9px; min-width: 0;">
+                  <span style="width: 7px; height: 7px; border-radius: 2px; flex: none; background: {{ p.color }};"></span>
+                  <span style="font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ p.name }}</span>
+                </div>
+                <div style="font-size: 12px; color: #A9A398;">{{ p.kind }}</div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #8B857A; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ p.repo }}</div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">{{ p.artifacts }}</div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">{{ p.tokens }}</div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #8B857A;">{{ p.last }}</div>
+                <div>
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: 0.06em; padding: 4px 8px; border-radius: 4px; background: {{ p.statusBg }}; color: {{ p.statusFg }};">{{ p.status }}</span>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isBoard }}" hint-placeholder-val="{{ false }}">
+        <div>
+          <div style="display: flex; align-items: center; gap: 7px; margin-bottom: 14px;">
+            <sc-for list="{{ boardFilters }}" as="f" hint-placeholder-count="5">
+              <button onClick="{{ f.go }}" style="border: 1px solid #2E2B27; cursor: pointer; font-family: 'JetBrains Mono', monospace; font-size: 10.5px; padding: 6px 11px; border-radius: 20px; background: {{ f.bg }}; color: {{ f.fg }};" style-hover="border-color: #4A4258;">
+                <span style="display: inline-block; width: 6px; height: 6px; border-radius: 2px; margin-right: 7px; background: {{ f.dot }};"></span>{{ f.label }}
+              </button>
+            </sc-for>
+            <span style="margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #6E6860;">{{ boardCount }}</span>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; align-items: start;">
+            <sc-for list="{{ columns }}" as="col" hint-placeholder-count="4">
+              <div style="border: 1px solid #262320; border-radius: 10px; background: #17150F; display: flex; flex-direction: column; min-height: 300px;">
+                <div style="padding: 12px 14px 10px; border-bottom: 1px solid #201E1A; display: flex; align-items: center; gap: 8px;">
+                  <span style="width: 7px; height: 7px; border-radius: 50%; background: {{ col.color }};"></span>
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.13em; color: #C7C1B6;">{{ col.name }}</span>
+                  <span style="margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #6E6860;">{{ col.count }}</span>
+                </div>
+                <div style="padding: 10px; display: flex; flex-direction: column; gap: 9px;">
+                  <sc-for list="{{ col.cards }}" as="c" hint-placeholder-count="3">
+                    <div style="border: 1px solid #2A2723; border-radius: 8px; padding: 11px 12px 10px; background: #1C1A16; cursor: grab;" style-hover="border-color: #4A4258; background: #201E1A;">
+                      <div style="display: flex; align-items: center; gap: 7px;">
+                        <span style="width: 6px; height: 6px; border-radius: 2px; background: {{ c.color }};"></span>
+                        <span style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: 0.08em; color: #8B857A;">{{ c.project }}</span>
+                        <span style="margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: #605B54;">{{ c.id }}</span>
+                      </div>
+                      <div style="font-size: 12.5px; font-weight: 500; line-height: 1.45; margin-top: 8px; text-wrap: pretty;">{{ c.title }}</div>
+                      <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
+                        <span style="font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.06em; padding: 3px 7px; border-radius: 4px; background: {{ c.tagBg }}; color: {{ c.tagFg }};">{{ c.tag }}</span>
+                        <span style="margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: #605B54;">{{ c.meta }}</span>
+                      </div>
+                    </div>
+                  </sc-for>
+                  <sc-if value="{{ col.empty }}" hint-placeholder-val="{{ false }}">
+                    <div style="border: 1px dashed #2A2723; border-radius: 8px; padding: 18px 12px; text-align: center; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #4E4A44;">nothing here</div>
+                  </sc-if>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isArtifacts }}" hint-placeholder-val="{{ false }}">
+        <div>
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 14px;">
+            <sc-for list="{{ artifacts }}" as="a" hint-placeholder-count="9">
+              <div style="border: 1px solid #262320; border-radius: 10px; overflow: hidden; background: #17150F; cursor: pointer;" style-hover="border-color: #3A352E;">
+                <div style="height: 116px; background: repeating-linear-gradient(135deg, #1C1A16 0 6px, #221F1B 6px 12px); border-bottom: 1px solid #262320; display: flex; align-items: center; justify-content: center;">
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: 0.12em; color: #6E6860;">{{ a.slot }}</span>
+                </div>
+                <div style="padding: 12px 14px 13px;">
+                  <div style="font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ a.name }}</div>
+                  <div style="display: flex; justify-content: space-between; margin-top: 7px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #6E6860;">
+                    <span>{{ a.kind }}</span><span>{{ a.ago }}</span>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 7px; margin-top: 10px;">
+                    <span style="width: 6px; height: 6px; border-radius: 2px; background: {{ a.color }};"></span>
+                    <span style="font-size: 11.5px; color: #A9A398;">{{ a.project }}</span>
+                    <span style="margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #6E6860;">v{{ a.version }}</span>
+                  </div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isAgents }}" hint-placeholder-val="{{ false }}">
+        <div>
+          <div style="border: 1px solid #3B3153; border-radius: 12px; background: linear-gradient(180deg, #201A2E 0%, #1A1622 100%); padding: 16px 18px 15px; box-shadow: 0 0 0 1px #1A1524, 0 12px 30px #0C0A14;">
+            <div style="display: flex; align-items: center; gap: 11px;">
+              <div style="width: 30px; height: 30px; flex: none; border-radius: 50%; position: relative;">
+                <div style="position: absolute; inset: -4px; border-radius: 50%; border: 1px solid #6D4AC4; animation: om-ripple 3.2s ease-out infinite; opacity: 0.5;"></div>
+                <div style="position: absolute; inset: -3px; border-radius: 50%; background: conic-gradient(from 0deg, transparent, #8B6BE8 120deg, transparent 260deg); animation: om-spin 4s linear infinite; filter: blur(2px); opacity: 0.9;"></div>
+                <div style="position: absolute; inset: 0; background: radial-gradient(circle at 36% 28%, #6E52B8 0%, #402C78 34%, #241748 68%, #170F26 100%); animation: om-wobble 8s ease-in-out infinite; border-radius: 50%;"></div>
+                <div style="position: absolute; inset: 0; animation: om-spin 5s linear infinite;">
+                  <div style="position: absolute; top: 1px; left: 50%; width: 3px; height: 3px; margin-left: -1.5px; border-radius: 50%; background: #E4DAFF; box-shadow: 0 0 5px #C4B0FF;"></div>
+                </div>
+                <div style="position: absolute; inset: 8px; border-radius: 50%; background: radial-gradient(circle at 46% 42%, #FFFFFF 0%, #E4DAFF 25%, #9C7BF0 60%, transparent 80%); animation: om-nucleus 2.4s ease-in-out infinite;"></div>
+              </div>
+              <div>
+                <div style="font-size: 14.5px; font-weight: 600; letter-spacing: -0.01em;">Orchestrator</div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #9C8FBE; margin-top: 3px;">opus · planning and dispatch · 6m 41s uptime</div>
+              </div>
+              <div style="margin-left: auto; display: flex; gap: 22px;">
+                <sc-for list="{{ orchStats }}" as="o" hint-placeholder-count="3">
+                  <div style="text-align: right;">
+                    <div style="font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.14em; color: #8378A0;">{{ o.label }}</div>
+                    <div style="font-family: 'JetBrains Mono', monospace; font-size: 17px; font-weight: 600; margin-top: 5px; color: {{ o.color }};">{{ o.value }}</div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1.15fr 1fr; gap: 18px; margin-top: 15px; padding-top: 14px; border-top: 1px solid #2C2440;">
+              <div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.14em; color: #8378A0;">CURRENT DIRECTIVE</div>
+                <div style="font-size: 12.5px; color: #DED6F2; line-height: 1.55; margin-top: 8px; text-wrap: pretty;">{{ directive }}</div>
+              </div>
+              <div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.14em; color: #8378A0;">DISPATCH LOG</div>
+                <div style="margin-top: 8px; display: flex; flex-direction: column; gap: 3px;">
+                  <sc-for list="{{ dispatchLog }}" as="d" hint-placeholder-count="4">
+                    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; line-height: 1.5; color: {{ d.color }};">{{ d.text }}</div>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: baseline; justify-content: space-between; margin: 20px 0 12px;">
+            <h2 style="margin: 0; font-size: 13px; font-weight: 600;">Pipeline</h2>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #6E6860;">{{ agentsRunningLabel }}</span>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; align-items: start;">
+            <sc-for list="{{ stages }}" as="s" hint-placeholder-count="5">
+              <div>
+                <div style="position: relative; padding-top: 19px; margin-bottom: 11px;">
+                  <div style="position: absolute; top: 5px; height: 1px; background: #3B3153; left: {{ s.railLeft }}; right: {{ s.railRight }};"></div>
+                  <div style="position: absolute; top: 1px; left: 0; width: 9px; height: 9px; border-radius: 50%; border: 1px solid {{ s.color }}; background: {{ s.nodeBg }};"></div>
+                  <div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: 0.14em; color: {{ s.labelColor }};">{{ s.name }}</div>
+                  <div style="font-family: 'JetBrains Mono', monospace; font-size: 9px; color: #605B54; margin-top: 5px;">{{ s.meta }}</div>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 9px;">
+                  <sc-for list="{{ s.cards }}" as="c" hint-placeholder-count="2">
+                    <div style="border: 1px solid #2A2723; border-radius: 9px; background: #17150F; padding: 11px 12px 12px; display: flex; flex-direction: column; gap: 8px; cursor: pointer;" style-hover="border-color: #4A4258; background: #1A1814;">
+                      <div style="display: flex; align-items: center; gap: 7px;">
+                        <span style="width: 6px; height: 6px; border-radius: 50%; flex: none; background: {{ c.dot }}; box-shadow: 0 0 7px {{ c.dot }};"></span>
+                        <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ c.name }}</span>
+                      </div>
+                      <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="width: 5px; height: 5px; border-radius: 2px; flex: none; background: {{ c.color }};"></span>
+                        <span style="font-size: 11px; color: #A9A398; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ c.project }}</span>
+                        <span style="margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 9px; color: #605B54;">{{ c.task }}</span>
+                      </div>
+                      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: #C7C1B6; line-height: 1.55; overflow-wrap: anywhere;">{{ c.step }}</div>
+                      <div style="height: 3px; border-radius: 2px; background: #232019; overflow: hidden;">
+                        <div style="height: 100%; width: {{ c.pct }}%; background: {{ c.dot }};"></div>
+                      </div>
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.06em; padding: 3px 6px; border-radius: 4px; background: {{ c.stateBg }}; color: {{ c.stateFg }};">{{ c.state }}</span>
+                        <span style="margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 9px; color: #605B54;">{{ c.elapsed }}</span>
+                      </div>
+                    </div>
+                  </sc-for>
+                  <sc-if value="{{ s.empty }}" hint-placeholder-val="{{ false }}">
+                    <div style="border: 1px dashed #2A2723; border-radius: 9px; padding: 16px 10px; text-align: center; font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: #4E4A44;">idle</div>
+                  </sc-if>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+
+          <h2 style="margin: 26px 0 11px; font-size: 13px; font-weight: 600;">Handoffs today</h2>
+          <div style="border: 1px solid #262320; border-radius: 10px; overflow: hidden; background: #17150F;">
+            <div style="display: grid; grid-template-columns: 0.7fr 1.5fr 1.1fr 1.6fr 2fr; gap: 12px; padding: 10px 18px; background: #191714; border-bottom: 1px solid #262320; font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: 0.12em; color: #8B857A;">
+              <div>TIME</div><div>WORKER</div><div>PROJECT</div><div>HANDOFF</div><div>RESULT</div>
+            </div>
+            <sc-for list="{{ handoffs }}" as="h" hint-placeholder-count="6">
+              <div style="display: grid; grid-template-columns: 0.7fr 1.5fr 1.1fr 1.6fr 2fr; gap: 12px; padding: 12px 18px; border-bottom: 1px solid #201E1A; align-items: center;" style-hover="background: #1C1A16;">
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: #8B857A;">{{ h.time }}</div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 11.5px; font-weight: 500;">{{ h.name }}</div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="width: 6px; height: 6px; border-radius: 2px; background: {{ h.color }};"></span>
+                  <span style="font-size: 12px; color: #A9A398;">{{ h.project }}</span>
+                </div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: #B79BEA;">{{ h.move }}</div>
+                <div style="font-size: 12px; color: #A9A398; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ h.result }}</div>
+              </div>
+            </sc-for>
+          </div>
+
+          <sc-if value="{{ drawerOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="display: grid; grid-template-columns: 1fr 1.15fr; gap: 12px; height: 320px; margin-top: 26px;">
+              <div style="border: 1px solid #262320; border-radius: 10px; background: #17150F; display: flex; flex-direction: column; overflow: hidden; min-width: 0;">
+                <div style="padding: 12px 16px; border-bottom: 1px solid #262320; display: flex; align-items: center; gap: 9px;">
+                  <span style="width: 7px; height: 7px; border-radius: 50%; background: {{ micDot }};"></span>
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; color: #8B857A;">TRANSCRIPT</span>
+                  <span style="margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #6E6860;">{{ micStatus }}</span>
+                </div>
+                <div style="flex: 1; overflow-y: auto; padding: 16px; font-size: 15px; line-height: 1.65; color: #DDD8CE; text-wrap: pretty;">
+                  <span>{{ transcript }}</span><span style="color: var(--accent, #9C7BF0);">{{ caret }}</span>
+                  <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #605B54; margin-top: 18px;">{{ transcriptHint }}</div>
+                </div>
+                <div style="border-top: 1px solid #262320; padding: 10px 16px; display: flex; gap: 8px; flex-wrap: wrap;">
+                  <sc-for list="{{ voiceCommands }}" as="v" hint-placeholder-count="3">
+                    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; padding: 5px 9px; border-radius: 5px; border: 1px solid #2E2B27; color: #8B857A;">{{ v }}</div>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="border: 1px solid #262320; border-radius: 10px; background: #131210; display: flex; flex-direction: column; overflow: hidden; min-width: 0;">
+                <div style="padding: 12px 16px; border-bottom: 1px solid #262320; display: flex; align-items: center; gap: 9px;">
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; color: #8B857A;">CLAUDE CODE</span>
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #6E6860;">~/dev/ledger</span>
+                  <span style="margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #6B9E72;">sonnet · 4 tools</span>
+                </div>
+                <div style="flex: 1; overflow-y: auto; padding: 14px 16px; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; line-height: 1.75;">
+                  <sc-for list="{{ terminal }}" as="l" hint-placeholder-count="0">
+                    <div style="color: {{ l.color }}; white-space: pre-wrap; overflow-wrap: anywhere;">{{ l.text }}</div>
+                  </sc-for>
+                  <div style="color: #4E4A44;">{{ terminalIdle }}</div>
+                </div>
+              </div>
+            </div>
+          </sc-if>
+
+          <div style="position: sticky; bottom: 0; z-index: 3; margin-top: 16px; box-shadow: 0 -16px 26px #100F0D; border: 1px solid #2E2B27; border-radius: 10px; background: #191714; padding: 13px 18px; display: flex; align-items: center; gap: 18px;">
+            <button onClick="{{ toggleMic }}" style="border: 0; padding: 0; cursor: pointer; width: 58px; height: 58px; border-radius: 50%; flex: none; position: relative; background: transparent;" style-hover="filter: brightness(1.14);">
+              <div style="position: absolute; inset: -6px; border-radius: 50%; border: 1px solid #8B6BE8; animation: om-ripple 2.6s ease-out infinite; opacity: {{ rippleOpacity }};"></div>
+              <div style="position: absolute; inset: -6px; border-radius: 50%; border: 1px solid #6D4AC4; animation: om-ripple 2.6s ease-out 1.3s infinite; opacity: {{ rippleOpacity }};"></div>
+              <div style="position: absolute; inset: -4px; border-radius: 50%; background: conic-gradient(from 0deg, transparent 0deg, #8B6BE8 90deg, transparent 200deg, #4A2E8F 300deg, transparent 360deg); animation: om-spin 5.5s linear infinite; opacity: {{ haloOpacity }}; filter: blur(4px);"></div>
+              <div style="position: absolute; inset: 0; background: radial-gradient(circle at 36% 28%, #6E52B8 0%, #402C78 32%, #241748 62%, #140E24 100%); box-shadow: inset 0 0 20px #0C0818, 0 0 {{ glowSize }} #6D4AC4; animation: om-wobble 7s ease-in-out infinite; border-radius: 50%;"></div>
+              <div style="position: absolute; inset: 5px; border-radius: 50%; background: conic-gradient(from 180deg, transparent, #9C7BF0 130deg, transparent 300deg); animation: om-spin-slow 9s linear infinite; opacity: {{ ringOpacity }}; filter: blur(1px);"></div>
+              <div style="position: absolute; inset: 0; animation: om-spin 4.2s linear infinite;">
+                <div style="position: absolute; top: 3px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: #E4DAFF; opacity: {{ satOpacity }}; box-shadow: 0 0 6px #C4B0FF;"></div>
+              </div>
+              <div style="position: absolute; inset: 6px; animation: om-spin-slow 6.4s linear infinite;">
+                <div style="position: absolute; bottom: 1px; left: 50%; width: 3px; height: 3px; margin-left: -1.5px; border-radius: 50%; background: #B79BEA; opacity: {{ satOpacity }}; box-shadow: 0 0 5px #9C7BF0;"></div>
+              </div>
+              <div style="position: absolute; inset: 12px; transform: scale({{ nucleusScale }});">
+                <div style="position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle at 46% 42%, #FFFFFF 0%, #E4DAFF 22%, #9C7BF0 55%, transparent 78%); animation: om-nucleus 1.9s ease-in-out infinite; opacity: {{ coreOpacity }};"></div>
+              </div>
+              <div style="position: absolute; inset: 17px; border-radius: 50%; background: #F6F1FF; filter: blur(2px); animation: om-cilia 2.3s ease-in-out infinite; opacity: {{ coreOpacity }};"></div>
+            </button>
+            <div style="flex: 1; min-width: 0; position: relative; height: 44px; overflow: hidden; border-radius: 8px; background: radial-gradient(120% 180% at 8% 50%, #221A3A 0%, #17131F 45%, #141210 100%);">
+              <div style="position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: linear-gradient(90deg, #322C48, transparent);"></div>
+              <div style="position: absolute; inset: 0 12px; display: flex; align-items: center;">
+                <sc-for list="{{ levels }}" as="lv" hint-placeholder-count="30">
+                  <div style="flex: 1; height: 100%; position: relative;">
+                    <div style="position: absolute; left: 50%; top: {{ lv.top }}%; transform: translate(-50%, -50%); width: {{ lv.size }}; height: {{ lv.size }}; border-radius: 50%; background: {{ lv.color }}; opacity: {{ lv.opacity }}; box-shadow: 0 0 {{ lv.blur }} {{ lv.color }};"></div>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="position: absolute; left: 14px; right: 14px; bottom: 4px; font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: #9C8FBE; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ dockLine }}</div>
+            </div>
+            <div style="flex: none; text-align: right;">
+              <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; color: #8B857A;">{{ micLabel }}</div>
+              <div style="font-size: 11.5px; color: #A9A398; margin-top: 4px;">Hold&nbsp;·&nbsp;Space to talk</div>
+            </div>
+            <button onClick="{{ toggleDrawer }}" style="flex: none; border: 1px solid #3B3153; background: #241E33; color: #C9B8F2; cursor: pointer; border-radius: 6px; padding: 8px 12px; font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: 0.08em;" style-hover="background: #2C2440;">{{ drawerLabel }}</button>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isUsage }}" hint-placeholder-val="{{ false }}">
+        <div>
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
+            <sc-for list="{{ usageTiles }}" as="t" hint-placeholder-count="4">
+              <div style="border: 1px solid #262320; border-radius: 10px; padding: 15px 16px; background: #17150F;">
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: 0.14em; color: #8B857A;">{{ t.label }}</div>
+                <div style="font-size: 25px; font-weight: 600; margin-top: 9px; font-family: 'JetBrains Mono', monospace; letter-spacing: -0.03em;">{{ t.value }}</div>
+                <div style="font-size: 11.5px; margin-top: 5px; color: #8B857A;">{{ t.delta }}</div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
+            <div style="border: 1px solid #262320; border-radius: 10px; padding: 16px 18px; background: #17150F;">
+              <h2 style="margin: 0 0 16px; font-size: 13px; font-weight: 600;">By surface</h2>
+              <div style="display: flex; flex-direction: column; gap: 13px;">
+                <sc-for list="{{ surfaces }}" as="s" hint-placeholder-count="4">
+                  <div>
+                    <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px;">
+                      <span>{{ s.name }}</span>
+                      <span style="font-family: 'JetBrains Mono', monospace; color: #8B857A;">{{ s.value }}</span>
+                    </div>
+                    <div style="height: 6px; border-radius: 3px; background: #232019; overflow: hidden;">
+                      <div style="height: 100%; width: {{ s.pct }}%; background: {{ s.color }};"></div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+            <div style="border: 1px solid #262320; border-radius: 10px; padding: 16px 18px; background: #17150F;">
+              <h2 style="margin: 0 0 16px; font-size: 13px; font-weight: 600;">By model</h2>
+              <div style="display: flex; flex-direction: column; gap: 13px;">
+                <sc-for list="{{ models }}" as="s" hint-placeholder-count="3">
+                  <div>
+                    <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px;">
+                      <span>{{ s.name }}</span>
+                      <span style="font-family: 'JetBrains Mono', monospace; color: #8B857A;">{{ s.value }}</span>
+                    </div>
+                    <div style="height: 6px; border-radius: 3px; background: #232019; overflow: hidden;">
+                      <div style="height: 100%; width: {{ s.pct }}%; background: {{ s.color }};"></div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+
+          <div style="border: 1px solid #262320; border-radius: 10px; margin-top: 12px; overflow: hidden; background: #17150F;">
+            <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap: 12px; padding: 10px 18px; background: #191714; border-bottom: 1px solid #262320; font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: 0.12em; color: #8B857A;">
+              <div>PROJECT</div><div>INPUT</div><div>OUTPUT</div><div>CACHE READ</div><div>{{ costHeader }}</div>
+            </div>
+            <sc-for list="{{ usageRows }}" as="r" hint-placeholder-count="6">
+              <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap: 12px; padding: 12px 18px; border-bottom: 1px solid #201E1A; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 9px;">
+                  <span style="width: 7px; height: 7px; border-radius: 2px; background: {{ r.color }};"></span>
+                  <span style="font-size: 12.5px; font-weight: 500;">{{ r.name }}</span>
+                </div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #A9A398;">{{ r.input }}</div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #A9A398;">{{ r.output }}</div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #A9A398;">{{ r.cache }}</div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">{{ r.cost }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isConnectors }}" hint-placeholder-val="{{ false }}">
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 12px;">
+          <sc-for list="{{ connectors }}" as="c" hint-placeholder-count="6">
+            <div style="border: 1px solid #262320; border-radius: 10px; padding: 15px 16px; background: #17150F;">
+              <div style="display: flex; align-items: center; gap: 9px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: {{ c.color }};"></span>
+                <span style="font-size: 13px; font-weight: 600;">{{ c.name }}</span>
+                <span style="margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: {{ c.color }};">{{ c.state }}</span>
+              </div>
+              <div style="font-size: 12px; color: #8B857A; margin-top: 9px; line-height: 1.5;">{{ c.note }}</div>
+              <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #605B54; margin-top: 11px;">{{ c.calls }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#5A3E7E&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;options&quot;:[&quot;#6D4AC4&quot;,&quot;#8B5CF0&quot;,&quot;#4A5BA8&quot;,&quot;#5A3E7E&quot;],&quot;section&quot;:&quot;Look&quot;},&quot;density&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;balanced&quot;,&quot;options&quot;:[&quot;airy&quot;,&quot;balanced&quot;,&quot;dense&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Look&quot;},&quot;showSpend&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Content&quot;},&quot;orgName&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Personal workspace&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Content&quot;}}">
+class Component extends DCLogic {
+  tasks = [
+    { id: 'LDG-41', project: 'Ledger', col: 'progress', title: 'Reconciliation step in the nightly job', tag: 'CLAUDE CODE', meta: '12m ago' },
+    { id: 'LDG-38', project: 'Ledger', col: 'waiting', title: 'Decide where unmatched rows land — review queue or inbox', tag: 'NEEDS YOU', meta: 'blocked 2h' },
+    { id: 'LDG-44', project: 'Ledger', col: 'backlog', title: 'Backfill statements for June and July', tag: 'CLAUDE CODE', meta: 'unstarted' },
+    { id: 'ATL-12', project: 'Atlas', col: 'progress', title: 'Q3 board deck — slides 4 to 6 need real numbers', tag: 'DECK', meta: '3h ago' },
+    { id: 'ATL-09', project: 'Atlas', col: 'waiting', title: 'Approve the churn cohort framing before I chart it', tag: 'NEEDS YOU', meta: 'blocked 1d' },
+    { id: 'ATL-14', project: 'Atlas', col: 'done', title: 'Pull retention numbers from the warehouse', tag: 'DONE', meta: 'yesterday' },
+    { id: 'SIG-27', project: 'Signal', col: 'progress', title: 'Onboarding prototype — empty states for screens 6 to 9', tag: 'PROTOTYPE', meta: '1d ago' },
+    { id: 'SIG-25', project: 'Signal', col: 'backlog', title: 'Write the copy pass for permission prompts', tag: 'CHAT', meta: 'unstarted' },
+    { id: 'FLD-07', project: 'Fieldnotes', col: 'backlog', title: 'Code the last three interview transcripts', tag: 'RESEARCH', meta: 'unstarted' },
+    { id: 'FLD-05', project: 'Fieldnotes', col: 'done', title: 'Cluster themes across 11 transcripts', tag: 'DONE', meta: 'yesterday' },
+    { id: 'LOM-16', project: 'Loom design system', col: 'waiting', title: 'Pick a direction for the pricing table variants', tag: 'NEEDS YOU', meta: 'blocked 3d' },
+    { id: 'LOM-18', project: 'Loom design system', col: 'backlog', title: 'Document spacing scale in the component docs', tag: 'CHAT', meta: 'unstarted' },
+    { id: 'HUB-02', project: 'Hub', col: 'progress', title: 'Wire Whisper Flow into the voice console', tag: 'CLAUDE CODE', meta: '5d ago' },
+    { id: 'HUB-03', project: 'Hub', col: 'done', title: 'Usage panel with per-project breakdown', tag: 'DONE', meta: '5d ago' }
+  ];
+
+  state = { view: 'overview', boardFilter: 'all', drawerOpen: false, mic: false, spoken: 0, levels: new Array(30).fill(0.12), term: 0, tick: 0 };
+
+  script = "Open the ledger repo and add a reconciliation step to the nightly job — it should diff the posted balances against the statement file and write anything unmatched to a review queue.".split(' ');
+
+  termLines = [
+    { text: '> reconciliation step, nightly job', color: '#9C7BF0' },
+    { text: '  read  jobs/nightly.ts (218 lines)', color: '#7E7870' },
+    { text: '  read  lib/statements.ts (94 lines)', color: '#7E7870' },
+    { text: '  edit  jobs/nightly.ts  +41 −6', color: '#6B9E72' },
+    { text: '  new   jobs/reconcile.ts  +88', color: '#6B9E72' },
+    { text: '  test  8 passed, 0 failed  (1.9s)', color: '#A9A398' },
+    { text: '  Unmatched rows now land in review_queue.', color: '#DDD8CE' }
+  ];
+
+  views = {
+    overview:   ['Overview', 'Tuesday, 31 August · 6 active projects, 2 sessions running'],
+    projects:   ['Projects', 'Everything you have going, across chat and Claude Code'],
+    artifacts:  ['Artifacts', '41 artifacts · decks, docs, prototypes and components'],
+    agents:     ['Command', 'Orchestrator moving work through brainstorm, plan, build, review, ship · talk to it below'],
+    board:      ['Board', 'Tasks across every project · drag to move, or say "move it to done"'],
+    usage:      ['Usage', 'Current billing period · 1–31 August'],
+    connectors: ['Connectors', 'MCP servers and integrations available to every session']
+  };
+
+  componentDidMount() {
+    this.onKey = e => {
+      if (e.code !== 'Space' || e.repeat || this.state.view !== 'agents') return;
+      if (e.target && /input|textarea/i.test(e.target.tagName)) return;
+      e.preventDefault();
+      this.toggleMic();
+    };
+    window.addEventListener('keydown', this.onKey);
+  }
+
+  componentWillUnmount() { clearInterval(this.timer); window.removeEventListener('keydown', this.onKey); }
+
+  toggleMic = () => {
+    if (this.state.mic) return this.stop();
+    this.setState({ mic: true, spoken: 0, term: 0 });
+    this.timer = setInterval(() => {
+      let done = false;
+      this.setState(s => {
+        const levels = s.levels.map((_, i) => 0.15 + Math.abs(Math.sin(s.tick * 0.5 + i * 0.6)) * (0.5 + Math.random() * 0.5));
+        const spoken = Math.min(this.script.length, s.spoken + (s.tick % 2 === 0 ? 1 : 0));
+        done = spoken >= this.script.length;
+        return { levels, spoken, tick: s.tick + 1 };
+      });
+      if (done) this.stop();
+    }, 110);
+  };
+
+  stop = () => {
+    clearInterval(this.timer);
+    this.setState({ mic: false, levels: new Array(30).fill(0.12) });
+    this.timer = setInterval(() => {
+      let done = false;
+      this.setState(s => { done = s.term + 1 >= this.termLines.length; return { term: s.term + 1 }; });
+      if (done) clearInterval(this.timer);
+    }, 320);
+  };
+
+  go = v => () => this.setState({ view: v });
+
+  openCommand = () => this.setState({ view: 'agents', drawerOpen: true });
+
+  toggleDrawer = () => this.setState(s => ({ drawerOpen: !s.drawerOpen }));
+
+  board(accent, P) {
+    const f = this.state.boardFilter;
+    const shown = this.tasks.filter(t => f === 'all' || t.project === f);
+    const tagStyle = {
+      'NEEDS YOU': ['#2C2038', '#B79BEA'],
+      DONE: ['#1E2C21', '#6B9E72'],
+      'CLAUDE CODE': ['#221F1A', '#C7C1B6']
+    };
+    const cols = [
+      { key: 'backlog', name: 'BACKLOG', color: '#4A4258' },
+      { key: 'progress', name: 'IN PROGRESS', color: accent },
+      { key: 'waiting', name: 'WAITING ON YOU', color: '#C4A05F' },
+      { key: 'done', name: 'DONE', color: '#6B9E72' }
+    ];
+    const chip = (label, value) => ({
+      label, go: () => this.setState({ boardFilter: value }),
+      bg: f === value ? '#241E33' : '#191714',
+      fg: f === value ? '#E4DAFF' : '#A9A398',
+      dot: f === value ? accent : (P[label] || '#3A352E')
+    });
+    return {
+      isBoard: this.state.view === 'board',
+      boardCount: shown.length + ' TASKS · ' + shown.filter(t => t.col === 'waiting').length + ' BLOCKED ON YOU',
+      boardFilters: [chip('All projects', 'all'), chip('Ledger', 'Ledger'), chip('Atlas', 'Atlas'), chip('Signal', 'Signal'), chip('Fieldnotes', 'Fieldnotes')],
+      columns: cols.map(c => {
+        const cards = shown.filter(t => t.col === c.key).map(t => {
+          const [tagBg, tagFg] = tagStyle[t.tag] || ['#221F1A', '#8B857A'];
+          return { ...t, color: P[t.project] || '#8A8578', tagBg, tagFg };
+        });
+        return { ...c, cards, count: cards.length, empty: cards.length === 0 };
+      })
+    };
+  }
+
+  agentData(accent, P) {
+    const S = {
+      EXPLORING: ['#241E33', '#B79BEA', '#7B8CC4'],
+      RUNNING: ['#241E33', '#B79BEA', accent],
+      QUEUED: ['#1C1A16', '#8B857A', '#4A4258'],
+      'NEEDS YOU': ['#2E2818', '#C4A05F', '#C4A05F'],
+      RETRYING: ['#2E1D1C', '#B0736F', '#B0736F'],
+      SHIPPED: ['#1E2C21', '#6B9E72', '#6B9E72']
+    };
+    const card = (name, project, task, step, pct, elapsed, state) => {
+      const s = S[state];
+      return { name, project, task, step, pct, elapsed, state, stateBg: s[0], stateFg: s[1], dot: s[2], color: P[project] || '#8A8578' };
+    };
+    const stages = [
+      { name: 'BRAINSTORM', color: '#7B8CC4', meta: 'avg 3m · 1 in flight', cards: [
+        card('brief-explorer', 'Atlas', 'ATL-09', 'compare  three framings for the churn cohort story', 55, '1m 12s', 'EXPLORING')
+      ]},
+      { name: 'PLAN', color: accent, meta: 'avg 5m · 2 in flight', cards: [
+        card('deck-numbers', 'Atlas', 'ATL-12', 'plan  slide order for 4 to 6, then pull the numbers', 41, '1m 48s', 'RUNNING'),
+        card('statement-backfill', 'Ledger', 'LDG-44', 'draft  backfill plan for June and July', 12, 'queued', 'QUEUED')
+      ]},
+      { name: 'BUILD', color: accent, meta: 'avg 11m · 2 in flight', cards: [
+        card('nightly-reconcile', 'Ledger', 'LDG-41', 'edit  jobs/reconcile.ts — unmatched rows to review_queue', 68, '4m 12s', 'RUNNING'),
+        card('transcript-coder', 'Fieldnotes', 'FLD-07', 'read  interviews/09.txt — tagging against the codebook', 23, '38s', 'RUNNING')
+      ]},
+      { name: 'REVIEW', color: '#C4A05F', meta: '1 escalated to you', cards: [
+        card('empty-states', 'Signal', 'SIG-27', 'waiting  plain or playful for the "no results" copy?', 88, '12m 03s', 'NEEDS YOU'),
+        card('pr-reviewer', 'Signal', 'SIG-31', 'retry  review PR #212 after a failed first pass', 8, '20s', 'RETRYING')
+      ]},
+      { name: 'SHIP', color: '#6B9E72', meta: '9 shipped today', cards: [
+        card('spacing-docs', 'Loom design system', 'LOM-18', 'merged  5 files into loom/docs', 100, '18m ago', 'SHIPPED')
+      ]}
+    ];
+    const h = (time, name, project, move, result) => ({ time, name, project, move, result, color: P[project] || '#8A8578' });
+    return {
+      isAgents: this.state.view === 'agents',
+      agentsRunningLabel: '5 STAGES · 8 WORKERS · 1 ESCALATED TO YOU',
+      orchStats: [
+        { label: 'IN PIPELINE', value: '8', color: '#DED6F2' },
+        { label: 'SHIPPED TODAY', value: '9', color: '#DED6F2' },
+        { label: 'ESCALATED', value: '1', color: '#C4A05F' }
+      ],
+      directive: 'Close out the Ledger reconciliation work, then get the Atlas board numbers ready. Every task passes review before it ships, and anything needing a judgment call comes back to me.',
+      dispatchLog: [
+        { text: '→ brainstorm   brief-explorer      Atlas ATL-09', color: '#B79BEA' },
+        { text: '→ plan         deck-numbers        Atlas ATL-12', color: '#B79BEA' },
+        { text: '→ build        nightly-reconcile   Ledger LDG-41', color: '#B79BEA' },
+        { text: '← review       empty-states        escalated: copy tone', color: '#C4A05F' },
+        { text: '✓ ship         spacing-docs        merged 5 files', color: '#6B9E72' }
+      ],
+      stages: stages.map((s, i) => ({
+        ...s,
+        railLeft: i === 0 ? '5px' : '-10px',
+        railRight: i === stages.length - 1 ? 'calc(100% - 5px)' : '-10px',
+        nodeBg: i === stages.length - 1 ? '#6B9E72' : '#1A1622',
+        labelColor: s.cards.length ? '#C7C1B6' : '#6E6860',
+        empty: s.cards.length === 0
+      })),
+      handoffs: [
+        h('11:42', 'spacing-docs', 'Loom design system', 'review → ship', 'Merged 5 files, no review comments'),
+        h('11:31', 'empty-states', 'Signal', 'build → review', 'Escalated: needs a copy tone decision'),
+        h('11:24', 'churn-chart', 'Atlas', 'build → ship', 'Cohort chart added to the deck, v4'),
+        h('11:08', 'brief-explorer', 'Atlas', 'brainstorm → plan', 'Three framings, one recommended'),
+        h('10:52', 'pr-reviewer', 'Signal', 'review → build', 'Sent back: two regressions in the flow'),
+        h('10:40', 'nightly-reconcile', 'Ledger', 'plan → build', 'Plan approved by you, 4 files scoped')
+      ]
+    };
+  }
+
+  renderVals() {
+    const v = this.state.view;
+    const accent = this.props.accent ?? '#6D4AC4';
+    const dense = this.props.density ?? 'balanced';
+    const showSpend = this.props.showSpend ?? true;
+    const [title, subtitle] = this.views[v];
+    const item = (label, id, meta) => ({ isItem: true, isLabel: false, label, meta: meta || '', go: this.go(id),
+      bg: v === id ? '#221F1A' : 'transparent', fg: v === id ? '#F2EEE6' : '#A9A398',
+      dot: v === id ? accent : '#3A352E' });
+    const label = l => ({ isLabel: true, isItem: false, label: l, meta: '', bg: '', fg: '', dot: '' });
+
+    const P = { Hub: '#8B6BE8', Ledger: '#6B9E72', Atlas: '#7B8CC4', Fieldnotes: '#C4A05F', Signal: '#B0736F', Loom: '#8A8578', 'Loom design system': '#8A8578' };
+
+    return {
+      orgName: this.props.orgName ?? 'Personal workspace',
+      title, subtitle,
+      isOverview: v === 'overview', isProjects: v === 'projects', isArtifacts: v === 'artifacts',
+      isUsage: v === 'usage', isConnectors: v === 'connectors',
+      goVoice: this.openCommand,
+      toggleMic: this.toggleMic,
+      ...this.board(accent, P),
+      ...this.agentData(accent, P),
+      limitPct: 62,
+      nav: [
+        label('WORKSPACE'),
+        item('Overview', 'overview'),
+        item('Projects', 'projects', '6'),
+        item('Board', 'board', '14'),
+        item('Artifacts', 'artifacts', '41'),
+        label('TOOLS'),
+        item('Command', 'agents', 'LIVE'),
+        item('Connectors', 'connectors', '6'),
+        label('ACCOUNT'),
+        item('Usage', 'usage'),
+      ],
+      tiles: [
+        { label: 'TOKENS TODAY', value: '1.24M', delta: '+18% vs. yesterday', deltaColor: '#6B9E72' },
+        { label: showSpend ? 'SPEND TODAY' : 'MESSAGES TODAY', value: showSpend ? '$18.40' : '312', delta: showSpend ? '$214 this period' : '94 in Claude Code', deltaColor: '#8B857A' },
+        { label: 'ACTIVE PROJECTS', value: '6', delta: '2 sessions running', deltaColor: '#8B857A' },
+        { label: 'VOICE MINUTES', value: '47', delta: 'Whisper Flow, this week', deltaColor: '#8B857A' }
+      ],
+      sessions: [
+        { project: 'Ledger', color: P.Ledger, ago: '12m', surface: 'CLAUDE CODE', snippet: 'Nightly job refactor — waiting on your call about where unmatched rows should go.' },
+        { project: 'Atlas', color: P.Atlas, ago: '3h', surface: 'CHAT', snippet: 'Drafted the Q3 board deck outline. Slides 4–6 still need real numbers.' },
+        { project: 'Fieldnotes', color: P.Fieldnotes, ago: 'Yesterday', surface: 'CHAT · 2 ARTIFACTS', snippet: 'Interview synthesis across 11 transcripts, themes clustered and tagged.' }
+      ],
+      chart: [0.42,0.55,0.38,0.61,0.72,0.34,0.29,0.66,0.81,0.94,0.58,0.47,0.7,0.62].map((h, i) => ({
+        h: Math.round(h * 100), day: ['18','19','20','21','22','23','24','25','26','27','28','29','30','31'][i],
+        color: i === 13 ? accent : (i > 9 ? '#4A443C' : '#38332C')
+      })),
+      recentArtifacts: [
+        { name: 'Q3 board deck', kind: 'DECK', project: 'Atlas', ago: '3h' },
+        { name: 'Reconciliation spec', kind: 'DOC', project: 'Ledger', ago: '12m' },
+        { name: 'Onboarding prototype', kind: 'PROTOTYPE', project: 'Signal', ago: '1d' },
+        { name: 'Interview synthesis', kind: 'DOC', project: 'Fieldnotes', ago: '1d' },
+        { name: 'Pricing table component', kind: 'COMPONENT', project: 'Loom', ago: '3d' }
+      ],
+      filters: ['All projects', 'Has Claude Code', 'Touched this week', 'Archived'],
+      projects: [
+        { name: 'Ledger', color: P.Ledger, kind: 'Code', repo: 'ewong/ledger', artifacts: '7', tokens: '4.8M', last: '12m ago', status: 'RUNNING', statusBg: '#1E2C21', statusFg: '#6B9E72' },
+        { name: 'Atlas', color: P.Atlas, kind: 'Deck', repo: '—', artifacts: '12', tokens: '2.1M', last: '3h ago', status: 'ACTIVE', statusBg: '#221F1A', statusFg: '#C7C1B6' },
+        { name: 'Fieldnotes', color: P.Fieldnotes, kind: 'Research', repo: '—', artifacts: '9', tokens: '1.6M', last: '1d ago', status: 'ACTIVE', statusBg: '#221F1A', statusFg: '#C7C1B6' },
+        { name: 'Signal', color: P.Signal, kind: 'Prototype', repo: 'ewong/signal-web', artifacts: '6', tokens: '3.2M', last: '1d ago', status: 'ACTIVE', statusBg: '#221F1A', statusFg: '#C7C1B6' },
+        { name: 'Loom design system', color: P.Loom, kind: 'Components', repo: 'ewong/loom', artifacts: '5', tokens: '0.9M', last: '3d ago', status: 'IDLE', statusBg: '#1C1A16', statusFg: '#7E7870' },
+        { name: 'Hub', color: P.Hub, kind: 'Prototype', repo: 'ewong/claude-hub', artifacts: '2', tokens: '0.4M', last: '5d ago', status: 'IDLE', statusBg: '#1C1A16', statusFg: '#7E7870' },
+        { name: 'Tax 2025', color: '#5F6E7B', kind: 'Docs', repo: '—', artifacts: '0', tokens: '0.1M', last: '3w ago', status: 'ARCHIVED', statusBg: '#1C1A16', statusFg: '#605B54' }
+      ],
+      artifacts: [
+        { name: 'Q3 board deck', kind: 'DECK · 18 SLIDES', project: 'Atlas', color: P.Atlas, ago: '3h', version: '4', slot: 'SLIDE 1 THUMBNAIL' },
+        { name: 'Reconciliation spec', kind: 'DOC · 6 PAGES', project: 'Ledger', color: P.Ledger, ago: '12m', version: '2', slot: 'PAGE 1 THUMBNAIL' },
+        { name: 'Onboarding prototype', kind: 'PROTOTYPE · 9 SCREENS', project: 'Signal', color: P.Signal, ago: '1d', version: '7', slot: 'FIRST SCREEN' },
+        { name: 'Interview synthesis', kind: 'DOC · 14 PAGES', project: 'Fieldnotes', color: P.Fieldnotes, ago: '1d', version: '3', slot: 'PAGE 1 THUMBNAIL' },
+        { name: 'Pricing table', kind: 'COMPONENT', project: 'Loom', color: P.Loom, ago: '3d', version: '5', slot: 'COMPONENT PREVIEW' },
+        { name: 'Churn cohort chart', kind: 'CHART', project: 'Atlas', color: P.Atlas, ago: '4d', version: '1', slot: 'CHART PREVIEW' },
+        { name: 'Nightly job diagram', kind: 'DIAGRAM', project: 'Ledger', color: P.Ledger, ago: '5d', version: '2', slot: 'DIAGRAM PREVIEW' },
+        { name: 'Hub dashboard', kind: 'PROTOTYPE · 6 VIEWS', project: 'Hub', color: P.Hub, ago: '5d', version: '1', slot: 'FIRST SCREEN' },
+        { name: 'Field guide, printable', kind: 'DOC · 22 PAGES', project: 'Fieldnotes', color: P.Fieldnotes, ago: '1w', version: '6', slot: 'PAGE 1 THUMBNAIL' }
+      ],
+      transcript: this.script.slice(0, this.state.spoken).join(' '),
+      caret: this.state.mic ? ' ▍' : '',
+      transcriptHint: this.state.spoken === 0 ? 'Nothing captured yet. Press the mic to dictate.' : (this.state.mic ? 'Listening — 240ms latency, en-US' : 'Sent to Claude Code · ' + this.state.spoken + ' words'),
+      micDot: this.state.mic ? accent : '#3A352E',
+      micStatus: this.state.mic ? 'RECORDING' : 'IDLE',
+      micLabel: this.state.mic ? 'WHISPER FLOW · LISTENING' : 'WHISPER FLOW · READY',
+      drawerOpen: this.state.drawerOpen,
+      toggleDrawer: this.toggleDrawer,
+      drawerLabel: this.state.drawerOpen ? 'HIDE ▾' : 'TRANSCRIPT ▴',
+      dockLine: this.state.mic
+        ? (this.state.spoken ? '… ' + this.script.slice(Math.max(0, this.state.spoken - 9), this.state.spoken).join(' ') : 'listening …')
+        : (this.state.spoken ? 'sent to orchestrator · ' + this.state.spoken + ' words · open the transcript to read it back' : 'say a directive, or dictate into a worker'),
+      haloOpacity: this.state.mic ? 0.95 : 0.18,
+      ringOpacity: this.state.mic ? 0.7 : 0.22,
+      coreOpacity: this.state.mic ? 1 : 0.35,
+      glowSize: this.state.mic ? '26px' : '8px',
+      rippleOpacity: this.state.mic ? 1 : 0,
+      satOpacity: this.state.mic ? 1 : 0.4,
+      nucleusScale: (this.state.mic ? 1 + (this.state.levels.reduce((a, b) => a + b, 0) / this.state.levels.length) * 0.22 : 1).toFixed(3),
+      levels: this.state.levels.map((h, i) => {
+        const on = this.state.mic;
+        const amp = on ? h : 0.06 + ((i * 37) % 11) / 90;
+        return {
+          top: Math.round(50 - (amp - 0.5) * 78),
+          size: (on ? 2.5 + amp * 4.5 : 2).toFixed(1) + 'px',
+          blur: on ? (3 + amp * 7).toFixed(0) + 'px' : '0px',
+          opacity: on ? (0.45 + amp * 0.55).toFixed(2) : 0.3,
+          color: on ? (i % 5 === 0 ? '#D8CCFF' : accent) : '#4A4258'
+        };
+      }),
+      voiceCommands: ['"run the tests"', '"undo that"', '"switch to ledger"'],
+      terminal: this.termLines.slice(0, this.state.term),
+      terminalIdle: this.state.term === 0 ? '$ waiting for voice input…' : (this.state.term < this.termLines.length ? '  …' : '$ '),
+      usageTiles: [
+        { label: 'TOKENS, PERIOD', value: '13.1M', delta: '68% of weekly allowance' },
+        { label: showSpend ? 'SPEND, PERIOD' : 'SESSIONS', value: showSpend ? '$214' : '186', delta: showSpend ? 'Projected $268 by 31 Aug' : '94 in Claude Code' },
+        { label: 'CACHE HIT RATE', value: '73%', delta: 'Saved an estimated $91' },
+        { label: 'VOICE MINUTES', value: '184', delta: 'Whisper Flow, this period' }
+      ],
+      surfaces: [
+        { name: 'Claude Code', value: '7.4M', pct: 100, color: accent },
+        { name: 'Chat', value: '3.9M', pct: 53, color: '#7B8CC4' },
+        { name: 'Voice console', value: '1.2M', pct: 16, color: '#6B9E72' },
+        { name: 'API / scripts', value: '0.6M', pct: 8, color: '#8A8578' }
+      ],
+      models: [
+        { name: 'Sonnet', value: '9.2M', pct: 100, color: accent },
+        { name: 'Opus', value: '3.1M', pct: 34, color: '#7B8CC4' },
+        { name: 'Haiku', value: '0.8M', pct: 9, color: '#8A8578' }
+      ],
+      costHeader: showSpend ? 'COST' : 'SHARE',
+      usageRows: [
+        { name: 'Ledger', color: P.Ledger, input: '3.1M', output: '412K', cache: '2.4M', cost: showSpend ? '$78.20' : '37%' },
+        { name: 'Signal', color: P.Signal, input: '1.9M', output: '288K', cache: '1.1M', cost: showSpend ? '$46.10' : '24%' },
+        { name: 'Atlas', color: P.Atlas, input: '1.4M', output: '196K', cache: '0.7M', cost: showSpend ? '$38.90' : '16%' },
+        { name: 'Fieldnotes', color: P.Fieldnotes, input: '1.1M', output: '154K', cache: '0.5M', cost: showSpend ? '$29.40' : '12%' },
+        { name: 'Loom design system', color: P.Loom, input: '0.6M', output: '88K', cache: '0.3M', cost: showSpend ? '$14.80' : '7%' },
+        { name: 'Hub', color: P.Hub, input: '0.3M', output: '41K', cache: '0.1M', cost: showSpend ? '$6.60' : '4%' }
+      ],
+      connectors: [
+        { name: 'Whisper Flow', state: 'CONNECTED', color: '#6B9E72', note: 'Dictation piped into the voice console and Claude Code sessions.', calls: '184 min this period' },
+        { name: 'GitHub', state: 'CONNECTED', color: '#6B9E72', note: '4 repos linked. Claude Code can read, branch and open PRs.', calls: '612 calls · 7d' },
+        { name: 'Filesystem', state: 'CONNECTED', color: '#6B9E72', note: 'Scoped to ~/dev. Writes require confirmation.', calls: '2,140 calls · 7d' },
+        { name: 'Linear', state: 'CONNECTED', color: '#6B9E72', note: 'Issues created from sessions are linked back to the project.', calls: '88 calls · 7d' },
+        { name: 'Postgres (staging)', state: 'DEGRADED', color: '#C4A05F', note: 'Read-only. Timing out on queries over 30s since Thursday.', calls: '31 calls · 7d' },
+        { name: 'Notion', state: 'NEEDS AUTH', color: '#B0736F', note: 'Token expired. Reconnect to sync research notes.', calls: 'last used 9d ago' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
