@@ -21,6 +21,19 @@ class VoiceBridge:
         self.url = url
         self._forward = forward
         self.connected = False
+        self._ws = None  # live voice socket, for sending control commands upstream
+
+    async def send(self, msg: dict) -> bool:
+        """Forward a control message (e.g. dashboard mic → record_toggle) to the voice core.
+        Returns False when voice isn't connected. The voice daemon only acts on it if it has
+        registered a command handler; otherwise it's ignored, so this stays safe."""
+        if self._ws is None or not self.connected:
+            return False
+        try:
+            await self._ws.send(json.dumps(msg))
+            return True
+        except Exception:
+            return False
 
     async def run(self) -> None:
         if websockets is None:
@@ -30,6 +43,7 @@ class VoiceBridge:
             try:
                 async with websockets.connect(self.url) as ws:
                     self.connected = True
+                    self._ws = ws
                     print(f"[dashboard] voice connected: {self.url}")
                     async for raw in ws:
                         try:
@@ -43,4 +57,5 @@ class VoiceBridge:
                 pass  # voice not up / dropped — retry
             finally:
                 self.connected = False
+                self._ws = None
             await asyncio.sleep(2)  # reconnect backoff

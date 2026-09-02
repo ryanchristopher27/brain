@@ -111,6 +111,7 @@ def run(cfg: dict) -> int:
     from pynput import keyboard
 
     import time
+    import threading
 
     stt, tts, bridge, server = build(cfg)
     server.start_in_thread()
@@ -138,28 +139,54 @@ def run(cfg: dict) -> int:
 
     print(f"[voice] ready — hold {cfg['hotkey']['push_to_talk']} to talk. Ctrl-C to quit.")
 
-    def on_press(key):
-        if key == ptt and not recorder.is_recording:
+    def begin_record():
+        if not recorder.is_recording:
             recorder.start()
             server.emit({"type": "state", "value": "listening"})
             print("[voice] ● listening…")
 
+    def end_record():
+        if not recorder.is_recording:
+            return
+        audio = recorder.stop()
+        server.emit({"type": "level", "value": 0})
+        dur = len(audio) / recorder.samplerate if len(audio) else 0.0
+        if len(audio) == 0:
+            server.emit({"type": "state", "value": "idle"})
+            return
+        server.emit({"type": "state", "value": "thinking"})
+        print(f"[voice] … transcribing {dur:.1f}s")
+        try:
+            text = stt.transcribe(audio, recorder.samplerate)
+        except Exception as e:  # keep the loop alive on a bad turn
+            text = ""
+            print(f"[voice] STT error: {type(e).__name__}: {e}")
+        respond_to(text, bridge, tts, server)
+
+    def on_press(key):
+        if key == ptt:
+            begin_record()
+
     def on_release(key):
-        if key == ptt and recorder.is_recording:
-            audio = recorder.stop()
-            server.emit({"type": "level", "value": 0})
-            dur = len(audio) / recorder.samplerate if len(audio) else 0.0
-            if len(audio) == 0:
-                server.emit({"type": "state", "value": "idle"})
-                return
-            server.emit({"type": "state", "value": "thinking"})
-            print(f"[voice] … transcribing {dur:.1f}s")
-            try:
-                text = stt.transcribe(audio, recorder.samplerate)
-            except Exception as e:  # keep the loop alive on a bad turn
-                text = ""
-                print(f"[voice] STT error: {type(e).__name__}: {e}")
-            respond_to(text, bridge, tts, server)
+        if key == ptt:
+            end_record()
+
+    # Optional remote control from the dashboard mic (voice still works standalone via the
+    # hotkey when nothing sends commands). end_record blocks on STT+bridge+TTS, so run it off
+    # the server's event-loop thread.
+    def on_command(msg):
+        action = (msg or {}).get("action")
+        if action == "record_start":
+            begin_record()
+        elif action == "record_stop":
+            threading.Thread(target=end_record, daemon=True).start()
+        elif action == "record_toggle":
+            if recorder.is_recording:
+                threading.Thread(target=end_record, daemon=True).start()
+            else:
+                begin_record()
+
+    server.set_command_handler(on_command)
 
     try:
         with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:

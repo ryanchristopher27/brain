@@ -405,7 +405,16 @@ async def ws_endpoint(ws: WebSocket):
     try:
         await ws.send_text(json.dumps({"type": "hello", "msg": "dashboard"}))
         while True:
-            await ws.receive_text()  # read-only display — ignore inbound
+            raw = await ws.receive_text()
+            # The only inbound the dashboard accepts is a voice control command, forwarded
+            # upstream to the voice core (e.g. the mic button → record_toggle). Everything
+            # else is ignored; voice acts on it only if it registered a command handler.
+            try:
+                msg = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+            if isinstance(msg, dict) and msg.get("type") == "cmd":
+                await bridge.send(msg)
     except WebSocketDisconnect:
         pass
     finally:

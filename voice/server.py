@@ -29,13 +29,29 @@ class EventServer:
         self._clients: set = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
+        self._on_command = None  # optional: set by the daemon to accept remote control
+
+    def set_command_handler(self, fn) -> None:
+        """Register a callback for inbound `{"type":"cmd", ...}` messages (e.g. the dashboard
+        mic button). Left unset in standalone mode, so the visualizer stays read-only."""
+        self._on_command = fn
 
     async def _handler(self, ws):
         self._clients.add(ws)
         try:
             await ws.send(json.dumps({"type": "hello", "msg": "voice event stream"}))
-            async for _ in ws:  # visualizer is read-only; ignore inbound
-                pass
+            async for raw in ws:  # inbound is ignored unless a command handler is registered
+                if self._on_command is None:
+                    continue
+                try:
+                    msg = json.loads(raw)
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(msg, dict) and msg.get("type") == "cmd":
+                    try:
+                        self._on_command(msg)
+                    except Exception as e:  # never let a bad command kill the socket
+                        print(f"[voice.server] command error: {type(e).__name__}: {e}")
         finally:
             self._clients.discard(ws)
 
