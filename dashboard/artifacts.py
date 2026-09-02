@@ -138,26 +138,58 @@ def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _preview(path: Path) -> tuple[str, str]:
+    """(title, excerpt) for an artifact card's rendered thumbnail. Reads a small prefix,
+    drops YAML frontmatter, and cleans markdown noise from the first lines."""
+    try:
+        text = path.read_text(errors="ignore")[:4000]
+    except Exception:
+        return "", ""
+    lines = text.splitlines()
+    if lines and lines[0].strip() == "---":                # skip frontmatter
+        end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
+        fm = lines[1:end] if end else []
+        title = next((l.split(":", 1)[1].strip().strip('"') for l in fm if l.startswith("title:")), "")
+        lines = lines[end + 1:] if end else lines
+    else:
+        title = ""
+    body = []
+    for l in lines:
+        s = re.sub(r"^[#>\-\*\s]+", "", l).strip()          # strip md leaders
+        s = re.sub(r"[`*_]", "", s)
+        if s:
+            if not title and l.startswith("#"):
+                title = s
+            else:
+                body.append(s)
+        if len(" ".join(body)) > 240:
+            break
+    return title, " ".join(body)[:240]
+
+
 def list_items() -> list[dict]:
     """Flat list of archived artifacts for the dashboard's Artifacts view, newest first."""
     items: list[dict] = []
     if not ARTIFACTS_DIR.is_dir():
         return items
+
+    def add(f: Path, kind: str, project: str, name: str | None = None):
+        st = f.stat()
+        title, excerpt = _preview(f)
+        items.append({"name": name or f.stem, "title": title, "excerpt": excerpt, "kind": kind,
+                      "project": project, "modified": _iso(st.st_mtime), "size": st.st_size})
+
     for sub in sorted(p for p in ARTIFACTS_DIR.iterdir() if p.is_dir()):
         project = sub.name
         for kind, folder in (("doc", "docs"), ("task", "tasks"), ("deliverable", "deliverables")):
             d = sub / folder
             if d.is_dir():
                 for f in sorted(d.glob("*.md")):
-                    if f.name.startswith("_"):
-                        continue
-                    st = f.stat()
-                    items.append({"name": f.stem, "kind": kind, "project": project,
-                                  "modified": _iso(st.st_mtime), "size": st.st_size})
+                    if not f.name.startswith("_"):
+                        add(f, kind, project)
         sess = sub / "sessions.md"
         if sess.exists():
-            items.append({"name": "session summaries", "kind": "sessions", "project": project,
-                          "modified": _iso(sess.stat().st_mtime), "size": sess.stat().st_size})
+            add(sess, "sessions", project, name="session summaries")
     items.sort(key=lambda x: x["modified"], reverse=True)
     return items
 

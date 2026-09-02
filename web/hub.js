@@ -307,7 +307,12 @@ RENDER.artifacts = async (pane) => {
   const grid = el("div", "art-grid");
   items.forEach((a) => {
     const c = el("div", "card art-card int");
-    const prev = el("div", "prev", (a.kind || "FILE").toUpperCase());
+    const prev = el("div", "prev");
+    const pv = el("div", "pv");
+    if (a.title) pv.append(el("div", "pvt", a.title));
+    if (a.excerpt) pv.append(el("div", "pvx", a.excerpt));
+    if (!a.title && !a.excerpt) pv.append(el("div", "pvt", (a.kind || "file").toUpperCase()));
+    prev.append(pv);
     const body = el("div", "body");
     body.append(el("div", "an", a.name), el("div", "ak", `${(a.kind || "").toUpperCase()} · ${relTime(a.modified) || ""}`));
     const ap = el("div", "ap"); ap.append(pdot(a.project), el("span", null, a.project));
@@ -360,10 +365,15 @@ RENDER.command = async (pane) => {
   pane.append(sectionHeadBlock("Pipeline", `${pipeline.columns.length} STAGES · ${pipeline.projects.length} PROJECTS`));
   const STAGES = [["brainstorm", "BRAINSTORM", "#7B8CC4"], ["plan", "PLAN", "var(--accent)"], ["build", "BUILD", "var(--accent)"], ["review", "REVIEW", "#C4A05F"], ["reflect", "SHIP", "#6B9E72"]];
   const grid = el("div", "pipeline");
-  STAGES.forEach(([key, label, color]) => {
+  STAGES.forEach(([key, label, color], idx) => {
     const col = el("div", "stage");
+    const node = el("div", "snode");
+    const circ = el("span", "ncirc"); circ.style.borderColor = color;
+    if (idx === STAGES.length - 1) circ.style.background = color;
+    node.append(circ);
+    if (idx < STAGES.length - 1) { const rail = el("span", "nrail"); node.append(rail); }
     const sh = el("div", "sh", label); sh.style.color = color;
-    col.append(sh, el("div", "sm", ""));
+    col.append(node, sh, el("div", "sm", ""));
     const inStage = pipeline.projects.filter((p) => p.phase === key || (key === "build" && p.phase === "scaffold"));
     inStage.forEach((p) => {
       const w = el("div", "worker");
@@ -515,7 +525,9 @@ function renderTranscript() {
 }
 function buildDock() {
   dockEl = el("div", "dock");
-  const mic = nucleus("mic"); mic.onclick = () => {};
+  const mic = nucleus("mic");
+  mic.onclick = () => sendCmd("record_toggle");
+  mic.title = "click to toggle recording · or hold Space on this view";
   starfield = el("div", "starfield");
   starfield.append(el("div", "axis"));
   for (let i = 0; i < 30; i++) {
@@ -574,11 +586,16 @@ async function resolveWs() {
   } catch (_) {}
   return "ws://127.0.0.1:8765";
 }
+let voiceWs = null;
+function sendCmd(action) {
+  try { if (voiceWs && voiceWs.readyState === 1) voiceWs.send(JSON.stringify({ type: "cmd", action })); } catch {}
+}
 async function connect() {
   const ws = new WebSocket(await resolveWs());
+  voiceWs = ws;
   ws.onopen = () => setVoice("ready");
   ws.onmessage = (m) => { try { onEvt(JSON.parse(m.data)); } catch {} };
-  ws.onclose = () => { setVoice("offline"); setTimeout(connect, 1500); };
+  ws.onclose = () => { voiceWs = null; setVoice("offline"); setTimeout(connect, 1500); };
   ws.onerror = () => ws.close();
 }
 function onEvt(evt) {
@@ -613,10 +630,15 @@ async function refreshCounts() {
   } catch {}
 }
 $("#talk-btn").onclick = () => go("command");
+let spaceHeld = false;
 document.addEventListener("keydown", (e) => {
   if (e.code === "Space" && current === "command" && !/input|textarea/i.test(document.activeElement.tagName)) {
     e.preventDefault();
+    if (!e.repeat && !spaceHeld) { spaceHeld = true; sendCmd("record_start"); }
   }
+});
+document.addEventListener("keyup", (e) => {
+  if (e.code === "Space" && spaceHeld) { spaceHeld = false; sendCmd("record_stop"); }
 });
 buildNav();
 go("overview");
