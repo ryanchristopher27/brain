@@ -409,9 +409,30 @@ RENDER.command = async (pane) => {
   renderTranscript();
 };
 
+function voiceCard(name, state, color, note, vol) {
+  const c = el("div", "card conn-card");
+  const ch = el("div", "ch"); const d = el("span", "d"); d.style.background = color;
+  ch.append(d, el("span", "n", name)); const s = el("span", "s", state); s.style.color = color; ch.append(s);
+  c.append(ch, el("div", "note", note), el("div", "vol", vol));
+  return c;
+}
 RENDER.connectors = async (pane) => {
   const health = await api("/api/health");
   pane.innerHTML = "";
+
+  // Voice input sources (Wispr Flow = external dictation; local daemon = live status).
+  pane.append(sectionHead("Voice input"));
+  const vgrid = el("div", "conn-grid");
+  vgrid.append(voiceCard("Wispr Flow", "ACTIVE", "var(--green)",
+    "System-wide AI dictation — types into the focused app (Claude Code, chat, anywhere). External app, no live status.",
+    "double-tap Caps Lock"));
+  const dLive = health.voice_connected;
+  vgrid.append(voiceCard("Local voice daemon", dLive ? "RUNNING" : "OFF", dLive ? "var(--green)" : "var(--faint)",
+    "Local Whisper → claude -p → speech, with the live dashboard visualization. Optional — run `python -m voice.daemon`.",
+    "127.0.0.1:8765"));
+  pane.append(vgrid);
+
+  pane.append(sectionHead("MCP servers"));
   const grid = el("div", "conn-grid");
   (health.mcps || []).forEach((m) => {
     const connected = m.token_set;
@@ -538,7 +559,7 @@ function buildDock() {
   tickerEl = el("div", "ticker", "hold Space (on Command) to talk");
   starfield.append(tickerEl);
   const rmeta = el("div", "rmeta");
-  rmeta.append(el("div", "w", "VOICE CORE · READY"), el("div", "h", "Hold Space to talk"));
+  rmeta.append(el("div", "w", "LOCAL DAEMON · READY"), el("div", "h", "click or hold Space · Wispr Flow for typing"));
   const drawerBtn = el("button", "drawer-btn", drawerOpen ? "HIDE ▾" : "TRANSCRIPT ▴");
   drawerBtnEl = drawerBtn;
   drawerBtn.onclick = toggleDrawer;
@@ -571,11 +592,11 @@ function setVoice(state) {
   const dot = $("#voice-dot"), lbl = $("#voice-lbl");
   const connected = state !== "offline";
   dot.style.background = connected ? "var(--green)" : "var(--faint)";
-  lbl.textContent = connected ? `voice · ${state}` : "voice offline";
+  lbl.textContent = connected ? `local daemon · ${state}` : "local daemon · off";
   NUCLEI.forEach((n) => (n.dataset.live = String(state === "listening")));
   if (state !== "listening") { levels = levels.map(() => 0.2); setDockLive(false); }
   if (dockEl && dockEl._meta) {
-    dockEl._meta.querySelector(".w").textContent = connected ? `VOICE CORE · ${state === "listening" ? "LISTENING" : "READY"}` : "VOICE CORE · OFFLINE";
+    dockEl._meta.querySelector(".w").textContent = connected ? `LOCAL DAEMON · ${state === "listening" ? "LISTENING" : "READY"}` : "LOCAL DAEMON · OFF";
   }
   renderTranscript();
 }
