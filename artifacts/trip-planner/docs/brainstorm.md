@@ -426,3 +426,127 @@ rewrite.
   manual forms, timeline, DnD, add-leg = always on).
 - Where the "enable AI" hint/CTA lives, and whether logged-in-but-no-AI differs from logged-out.
 - Minimal helper shape that anticipates the agent registry without over-building for v1.
+
+---
+
+## 2026-09-12 · Nocturne redesign + global assistant (desktop)
+
+### Problem / Opportunity
+The app works end-to-end but wears a plain slate/sky utility skin, and its AI lives *inside* the
+plan pane. A Claude-design handoff ("**Nocturne**" system + expanded screens) reimagines Odyssai as
+an **AI-first** product: a persistent, context-aware assistant beside every screen, a polished dark
+identity, a map-centric Trip page, a signature dates-open flow, and richer Flights/Ideas/City views.
+Crucially the handoff sits **on our existing architecture** (it ships our `pattern.md`; its
+propose→apply→undo *is* our patch-ops + history), so this is a **UI/interaction redesign over the
+engine we already have**, not a rebuild.
+
+### Goals
+- Adopt **Nocturne** (dark, low-chroma, single blurple accent) across the app.
+- Make the assistant **always-present and context-aware** (desktop right rail on every screen).
+- Add the handoff's screens/features: **map hero, day-by-day, dates-open date-finder, budget donut,
+  weather strip, richer Flights, City/stop detail, Ideas grid.**
+- **Reuse, don't rebuild** the engine: lifecycle, patch-ops/undo, local-first + Supabase sync, Ignav.
+- **Desktop first**; mobile (tab bar + bottom sheet) a later phase.
+
+### Audience
+Ryan (primary), plus anyone he shares the deployed app with — now a visually finished product.
+
+### Constraints
+- Handoff `README.md` (in the design bundle) is the **source of truth** for values; `.dc.html` are
+  references (ignore their "DC" runtime). Pull the exact token ramp from those files at build.
+- Keep the whole existing stack intact (this is a layer над it); no regression to sync/auth/flights.
+- Reconcile the demo's **one hardcoded Japan trip + fake ANA/ZIPAIR flights** → our **generic
+  lifecycle + real Ignav**.
+
+### Decided (locked via this brainstorm)
+- **Full redesign**, scoped brainstorm→plan, **desktop first**.
+- **Full global assistant rail** — rearchitect the shell to top-bar tabs (Ideas·Trip·City·Flights)
+  + a persistent 342px context-aware assistant rail; it's the evolution of `PlanChat`.
+- **Data fidelity:** date-finder = **real Ignav**; budget donut = **real** (our costs);
+  **weather strip = LLM-derived** (agent narrates seasonal norms → temps); **Ideas match-% =
+  LLM-derived** (agent scores fit vs preferences). No weather API, no fake scores — agent-native.
+
+### Ideas & Directions
+
+#### 1 · Nocturne token layer (re-skin)
+The theme lives centrally in `index.css` component classes (`.card`/`.btn-*`/`.chip`/`.field`) +
+the Tailwind theme, and the app is already on **Inter** — so redefining tokens re-skins most of the
+app for free. Rewrite those to Nocturne: `--color-bg #161826` (wrap `#0f1017`), `--color-surface`,
+`--color-divider`, `--color-text #e9e9ed`, accent 100–900 (500 = `#9184d9`), neutral 500–800,
+assistant panel `#13151f`; **outlined** primary buttons; muted text `rgba(233,233,237,.45–.78)`.
+**Dark-only** — Nocturne commits to one visual world, so drop the light-theme machinery. Add
+**Phosphor** icons (new dep). Sweep the handful of hardcoded `slate-*/sky-*` utility usages.
+
+#### 2 · Shell rearchitecture — top-bar tabs + global assistant rail (the big one)
+Replace the sidebar + `mode` state with: a **top bar** (brand · breadcrumb · tab group · dates-status
+pill), a **main content area** that routes on a `page` state (`ideas|trip|city|flights`), and a
+**persistent assistant rail** (`342px`, `#13151f`) on every screen. The rail is `PlanChat` evolved:
+**context-aware** (subtitle + suggestion chips per page), still answering + proposing edits.
+**Proposal cards = our `applyOps` + `history`** (ops list is display metadata; Apply runs the effect,
+Undo reverts) — the handoff's contract already matches ours. Assistant is `aiAvailable`-gated as today.
+
+#### 3 · Trip page
+Map hero (Leaflet route map) → day-by-day (segments as day cards, click a city → City page) →
+flights section (dates-open two states) → viz row: **budget donut** (real, from flight + activity
+costs via `conic-gradient`) + **weather strip** (LLM-derived seasonal temps).
+
+#### 4 · Dates-open flow (signature)
+Our **`lengthDays`** already models "planned by length." When no `startDate`: show the open-dates
+banner + a **date-finder** — the same round-trip priced across a departure window as a bar chart
+(**real Ignav**, cache the window). **Locking a departure sets `startDate`** and fills flights +
+budget everywhere. Header pill toggles dashed "Dates open · N days" ↔ solid "{dep – ret} · Change."
+
+#### 5 · Maps (Leaflet, new dep)
+Dark OSM tiles via CSS filter `invert(1) hue-rotate(185deg) …`; dashed accent route polyline + glow
+markers (Trip); POI markers (City). **Open question — geocoding:** segments are city names; the map
+needs lat/lng. Options: **LLM provides coords** (agent-native, cache on the segment) vs OSM Nominatim
+via the helper. Lean LLM-coords-cached for v1 to avoid another external dep.
+
+#### 6 · Flights page
+Restyle `FlightSearch` to the Nocturne flights page: route/date/travelers chips, **price-by-date
+chart** (real Ignav), outbound/return lists, summary column. Reuses the Ignav layer + booking links.
+
+#### 7 · City / stop detail
+Per-segment page: POI map + overview + things-to-do / stay / food. Content is **agent-assisted**
+(LLM fills suggestions) over our segment data. POIs need coords (same geocoding question).
+
+#### 8 · Ideas page
+Restyle brainstorm to the candidate grid: idea cards with **LLM match-%** badge, type tags, price/
+best-month, Explore/Open actions → proposal/plan. Match-% is an agent call returning structured JSON.
+
+#### 9 · LLM-derived data (weather + match-%)
+New agent calls (editPlan-style, structured JSON out) for the weather strip (seasonal norms per
+segment + month) and idea match scores. `aiAvailable`-gated; degrade gracefully (omit/neutral) with
+no agent/key. Fits the agent-native identity and needs no new external API.
+
+### Recommendations
+1. **Token layer first** (R1) — re-skins the current app immediately, low risk, unblocks everything.
+2. **Then the shell/rail** (R2) — the defining interaction and the biggest rearchitecture; do it
+   behind the new top-bar shell so screens can be ported one at a time.
+3. **Reuse the engine** — patch-ops/undo, Ignav, sync, lifecycle all stay; this is presentation +
+   IA + a few agent calls.
+4. **Two new deps only:** Leaflet + Phosphor. Dark-only (drop light theme).
+5. **LLM-coords-cached** for maps in v1; Nominatim as a fallback if needed.
+
+### Suggested Decisions (confirm in /plan)
+- Dark-only Nocturne (drop the light-theme tokens) — recommend yes.
+- New deps Leaflet + Phosphor — recommend yes.
+- Map geocoding: LLM-provided coords cached on segments (recommend) vs Nominatim.
+- Date-finder window size (e.g. 7 days) + Ignav caching budget.
+- Mobile explicitly deferred to a later phase.
+
+### Open Questions (for /plan)
+- Exact Nocturne ramp values (extract from the `.dc.html`).
+- Per-page assistant context: subtitles, suggestion-chip sets, and how "current page" is passed.
+- Geocoding approach + where coords are stored/cached.
+- Not-yet-designed states the handoff flags: empty/loading/error, booking hand-off, mobile City.
+- How Ideas cards map to our idea/proposal records (Open → existing promote-to-proposal).
+
+### Next Steps — what /plan needs
+1. Confirm the suggested decisions (deps, dark-only, geocoding).
+2. Extract the exact Nocturne tokens + type scale from the handoff HTML.
+3. Define the shell contract (page router + top bar + global rail + assistant context API).
+4. Sequence, e.g.: **R1 Nocturne tokens/icons → R2 shell + global assistant rail → R3 Trip page
+   (map hero + day-by-day + budget donut) → R4 dates-open date-finder (real Ignav) → R5 Flights
+   page → R6 City detail → R7 Ideas grid + LLM match-% + weather → R8 polish + missing states.**
+   (Mobile = a separate later phase.)

@@ -582,3 +582,158 @@ Primary modules (new/changed):
 | Realtime | Deferred (D7) | v1 pull-on-login + push-on-change is enough | 2026-09-11 |
 | Sync scope | Trips only (v1) | Ideas/brainstorm/chat later | 2026-09-11 |
 | Deploy target | Vercel (static Vite build) | Simple static host; Supabase public env vars | 2026-09-11 |
+
+---
+
+# Plan — Odyssai: Nocturne Redesign + Global Assistant (v5, desktop)
+
+Date: 2026-09-12
+Status: Active — R1–R8 implemented & verified 2026-09-12
+Brainstorm: [docs/brainstorm.md](brainstorm.md) (2026-09-12 · Nocturne redesign + global assistant section)
+
+## Overview
+A **UI/interaction redesign over the engine we already have** — not a rebuild. The Claude-design
+handoff ("Nocturne") reimagines Odyssai as an AI-first product: a persistent, context-aware
+assistant beside every screen, a polished dark identity, a map-centric Trip page, a signature
+dates-open flow, and richer Flights/Ideas/City views. The handoff ships our own `pattern.md`, and
+its propose→apply→undo **is** our patch-ops + history — so the lifecycle, sync, Ignav, and accounts
+all stay; this layer is presentation + information architecture + a few structured agent calls.
+
+Scoped **desktop first**. Mobile (bottom tab bar + Ask-Odyssai sheet, already designed in the
+handoff) is a deliberately deferred later phase.
+
+## Goals & Success Criteria
+- **Nocturne applied** app-wide: dark-only, low-chroma, single blurple accent `#9184d9`, Inter,
+  Phosphor icons, 8px radii, outlined primary buttons. No stray slate/sky utilities remain.
+- **Assistant is always-present + context-aware**: a persistent 342px right rail on every page,
+  with per-page subtitle + suggestion chips; still answers **and** proposes edits (Apply/Undo).
+- **New screens shipped**: Trip (map hero + day-by-day + budget donut + weather strip), Flights
+  (search + price-by-date chart + summary), City/stop detail (POI map + overview), Ideas grid
+  (match badges). Shell is top-bar tabs (Ideas · Trip · City · Flights) over a `page` router.
+- **Signature dates-open flow**: a plan with no `startDate` shows the open-dates banner + a
+  date-finder bar chart (real Ignav across a departure window); locking a departure sets
+  `startDate` and fills flights + budget everywhere.
+- **Data fidelity honored**: date-finder + budget donut = real; weather strip + Ideas match-% =
+  LLM-derived (agent-native, structured JSON out, `aiAvailable`-gated, degrade gracefully).
+- **No regression**: lifecycle, patch-ops/undo, local-first + Supabase sync, auth, Ignav all keep
+  working; localStorage keys unchanged; signed-out = pure local.
+
+## Scope
+### In Scope
+- Nocturne token layer in `index.css` + Tailwind theme; Phosphor + Leaflet deps.
+- Shell rearchitecture: top bar + tab group + dates pill; `page` router; global assistant rail.
+- Trip / Flights / City / Ideas pages (desktop), ported onto existing records + engine.
+- Dates-open date-finder (real Ignav window, cached) + header pill toggle.
+- Leaflet dark maps (route map on Trip, POI map on City) with LLM-provided cached coords.
+- Two new LLM calls: weather strip + Ideas match-% (structured JSON, gated, graceful).
+- Missing states the handoff flags: empty / loading / error, booking hand-off.
+
+### Out of Scope
+- Mobile layouts (tab bar, Ask-Odyssai sheet, bottom sheet) — later phase.
+- Any change to the sync/auth/Ignav/lifecycle engine beyond additive fields (segment coords).
+- Real weather API, real match-scoring service, real geocoding service (all LLM-derived/cached).
+- Light theme (Nocturne is dark-only; the light-theme machinery is removed).
+
+## Tech Stack & Architecture
+- **Unchanged core**: React 18 + Vite 5 + Tailwind 3; localStorage seam (`storage.js`); patch-ops
+  (`patch.js`) + `history.js`; lifecycle (`trip.js`/`escalate.js`/`migrate.js`); Ignav
+  (`flights.js` + `server/ignav.mjs` + `api/flights/*`); Supabase sync (`supabase.js`/`sync.js`).
+- **New deps**: `leaflet` (maps) + `@phosphor-icons/react` (icons). Dark-only, so light tokens drop.
+- **Shell**: `App.jsx` loses `mode`, gains `page` (`ideas|trip|city|flights`) + `activeCityId`.
+  New `components/Shell.jsx` (top bar + tab group + dates pill + body flex row), `components/
+  AssistantRail.jsx` (PlanChat evolved: takes a **page-context** prop → subtitle + chip set;
+  same ops/Apply/Undo). Screens become `pages/` components rendered by the router.
+- **Assistant context API**: rail receives `{ page, record, activeCity }`; it derives the subtitle,
+  the suggestion-chip set, and the system-context passed to `editPlan`. Existing per-record chat
+  history keys are reused. Assistant `aiAvailable`-gated exactly as today.
+- **Maps/geocoding**: segments store optional `lat`/`lng` (new v5 fields). When missing and an
+  agent/key is available, one structured LLM call fills coords for a record's stops (cached on the
+  segment; never re-fetched). No coords + no agent → map shows a graceful placeholder. Nominatim
+  via the helper is the documented fallback if LLM coords prove unreliable.
+- **LLM data**: `aiClient.js` gains `deriveWeather(record)` and `scoreIdeas(ideas, prefs)`, both
+  returning structured JSON (same discipline as `editPlan`); results cached on the record/idea.
+- **Migration**: bump `SCHEMA_VERSION` to 5; add nullable `lat`/`lng`/`weather`/`coordsFetched`
+  fields; no destructive change (v4 records load unchanged).
+
+## Milestones
+| # | Milestone | Description | Dependencies |
+|---|-----------|-------------|--------------|
+| R1 | Nocturne token layer | Rewrite `index.css` tokens + Tailwind theme to Nocturne (dark-only); add Phosphor; sweep hardcoded slate/sky utilities. Re-skins the current app in place. | — |
+| R2 | Shell + global assistant rail | Top bar (brand · breadcrumb · tabs · dates pill) + `page` router + persistent 342px `AssistantRail` (PlanChat evolved, context-aware). Port existing views behind it. | R1 |
+| R3 | Trip page | Map hero (Leaflet route map + LLM coords) → day-by-day day cards → flights section → viz row (real budget donut + LLM weather strip). | R2 |
+| R4 | Dates-open date-finder | Open-dates banner + date-finder bar chart (real Ignav across a 7-day window, cached); lock-departure sets `startDate` + fills flights/budget; header pill toggle. | R3 |
+| R5 | Flights page | Restyle `FlightSearch` to Nocturne flights page: route/date/traveler chips, price-by-date chart, outbound/return lists, summary column. Reuse Ignav + booking links. | R2 |
+| R6 | City / stop detail | Per-segment page: Leaflet POI map + overview + quick-facts; agent-assisted things-to-do/stay/food (Overview built, other tabs stubbed). | R2, R3 |
+| R7 | Ideas grid + LLM data | Restyle Brainstorm to the candidate grid with match badges (LLM match-%) + type tags + price/best-month; wire weather strip LLM call. Open → existing promote-to-proposal. | R2 |
+| R8 | Polish + missing states | Empty/loading/error states, booking hand-off, focus/hover/pressed system, motion (rise/pulse), attribution, final detector/design pass. | R3–R7 |
+
+## Task Breakdown (mid depth)
+**R1 — Nocturne tokens**
+- Extract the full ramp from the handoff into CSS custom props: `--color-bg #161826` / wrap
+  `#0f1017` / `--color-surface` / `--color-divider` / `--color-text #e9e9ed`; accent 100–900 (500
+  `#9184d9`); neutral 500–800; assistant panel `#13151f`; muted `rgba(233,233,237,.45–.78)`.
+- Restyle `.card`/`.btn-*`/`.chip`/`.field` (outlined primary buttons; accent hover/pressed/focus).
+- Remove light-theme tokens/machinery; add Phosphor; replace ad-hoc slate/sky utility usages.
+
+**R2 — Shell + rail**
+- `Shell.jsx`: 52px top bar (brand 17/600 -0.02em · `/` 30% · breadcrumb 13px · tab pills
+  active `accent-800`/`accent-100` · dates pill right); body flex row, main `flex:1` scroll +
+  `AssistantRail` 342px `#13151f`; max width 1180 centered.
+- `App.jsx`: replace `mode` with `page` + `activeCityId`; keep session/tombstone/sync effects.
+- `AssistantRail.jsx`: port `PlanChat` thread + proposal cards + input; add `pageContext` →
+  subtitle + suggestion chips; route free text by keyword to intent as today.
+
+**R3 — Trip page**
+- `pages/TripPage.jsx`: map hero (Leaflet), day-by-day day cards (segments; Kyoto-style card →
+  City page), flights section (two states), viz row.
+- Budget donut (`conic-gradient` from real flight + activity costs; "$3.3k+ / — set dates" before
+  dates). Weather strip (5 bars from `deriveWeather`).
+- `lib/geo.js`: fill+cache stop coords via LLM; graceful placeholder when unavailable.
+
+**R4 — Date-finder**
+- Open-dates banner when no `startDate`; date-finder bar chart = round-trip priced across a 7-day
+  departure window (real Ignav, cached per window); cheapest bar highlighted.
+- Tapping/locking a bar sets `startDate`+`endDate` (from `lengthDays`) → flights + budget fill.
+- Header dates pill toggles dashed "Dates open · N days" ↔ solid "{dep – ret} · Change".
+
+**R5 — Flights page** — restyle `FlightSearch`: chips, price-by-date chart, outbound/return lists,
+260px summary column (total, per-traveler, CO₂ line, add-to-trip, keep-tracking). Reuse Ignav.
+
+**R6 — City page** — `pages/CityPage.jsx`: POI map (things-to-do dots / stays squares), overview
+paragraph + tag row + quick-facts card; tabs (Overview built, rest stubbed); agent-assisted content.
+
+**R7 — Ideas page** — `pages/IdeasPage.jsx`: candidate grid, idea cards w/ match badge
+(`scoreIdeas` LLM), type tags, price-pp + best-month footer, Explore/Open → proposal.
+
+**R8 — Polish** — states, booking hand-off, motion, focus system, attribution, design detector pass.
+
+## Risks & Mitigations
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| LLM coords wrong/hallucinated | Med | Med | Cache once; show label; Nominatim-via-helper fallback documented; markers tolerate approx placement |
+| Date-finder = many Ignav calls | Med | Med | Small window (7); cache per (route, window); reuse round-trip search; only on demand |
+| Shell rearchitecture regresses sync/auth | Low | High | Keep all App effects intact; port views behind new shell one at a time; manual two-session check |
+| Weather/match LLM adds latency/cost | Low | Low | Gated + cached + graceful omit; never blocks manual use |
+| Handoff gaps (empty/error/booking) underspecified | Med | Low | R8 owns them explicitly; reuse existing S9 booking feedback |
+
+## Dependencies
+- `leaflet` + OSM tiles (dark CSS filter; attribution kept). `@phosphor-icons/react`.
+- Existing: Ignav key (flights/date-finder), agent-or-BYOK (assistant, coords, weather, match-%).
+
+## Open Questions
+- LLM coord accuracy at city granularity — validate in R3; fall back to Nominatim if poor.
+- Exact per-page suggestion-chip copy (draft in R2, refine per page).
+- Date-finder window size default (7) + whether to let the user widen it.
+
+## Decisions Log
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Redesign shape | Layer over existing engine, not rebuild | Handoff ships our pattern.md; propose/apply/undo == our patch-ops | 2026-09-12 |
+| Platform scope | Desktop first; mobile deferred | User-decided in brainstorm | 2026-09-12 |
+| Theme | Dark-only (drop light machinery) | Nocturne commits to one visual world | 2026-09-12 |
+| New deps | Leaflet + Phosphor only | Maps + icon set the design requires | 2026-09-12 |
+| Geocoding | LLM-provided coords cached on segments | Agent-native, no new external dep; Nominatim fallback | 2026-09-12 |
+| Weather + match-% | LLM-derived, gated, cached, graceful | User-decided; agent-native, no weather/scoring API | 2026-09-12 |
+| Date-finder + budget | Real (Ignav + our costs) | User-decided fidelity split | 2026-09-12 |
+| Assistant | Global context-aware rail = PlanChat evolved | Reuse thread/ops/undo; add page-context | 2026-09-12 |
+| Schema | Bump to v5; add nullable lat/lng/weather/coordsFetched | Non-destructive; v4 loads unchanged | 2026-09-12 |

@@ -231,3 +231,44 @@ hardening: validate the provider URL scheme before opening (S8, applied).
   flights) now surface a message on failure/expired instead of silently no-op'ing. Verified
   in-app: a saved flight with a stale ignav_id shows "Couldn't fetch a booking link — the fare
   may have expired." No plan update (UX polish).
+
+---
+
+## 2026-09-12 · Nocturne redesign (v5, R1–R8) — build review
+
+Full desktop redesign onto the existing engine (lifecycle, patch-ops/undo, sync, Ignav all
+unchanged). Verified in-app against a seeded Tokyo→Kyoto→Takayama plan:
+
+- **R1 Nocturne tokens** — `index.css` rewritten to the Nocturne token layer (dark-only, accent
+  `#9184d9`), Tailwind bridged to the CSS vars, Inter via Google Fonts, Phosphor icons. Swept all
+  slate/sky/rose/emerald/amber utilities out of the surviving components.
+- **R2 Shell + global assistant rail** — top-bar tabs (Ideas · Trip · {City} · Flights) + trip
+  switcher + dates pill; `AssistantRail` unifies the old Brainstorm + PlanChat, context-aware per
+  page (subtitle + suggestion chips). Verified the rail's context + chips change across all pages.
+- **R3 Trip page** — Leaflet dark route map (verified: dashed accent polyline + glow markers over
+  Japan), map-hero title/gradient overlay (fixed z-index over Leaflet panes), day-by-day cards,
+  real budget donut ($1.7k+, flights "— set dates" pre-dates), LLM weather strip (verified live:
+  Tokyo/Kyoto/Takayama temps derived by the helper).
+- **R4 Date-finder** — open-dates banner + dashed "Dates open · N days" pill; date-finder chart
+  (real Ignav window scan, cached); lock-departure → `startDate`/`endDate`. Chart pricing needs an
+  Ignav key to populate (graceful "not configured" otherwise).
+- **R5 Flights page** — Nocturne search + results + 240px summary column (total, per-traveler,
+  CO₂ est, add-to-trip/book) + collapsible date-finder. Reuses the Ignav layer.
+- **R6 City page** — POI map (graceful placeholder when uncoordinated), Overview/Do/Stay/Food tabs,
+  agent-assisted briefing (`deriveCityDetail`, cached on the segment).
+- **R7 Ideas grid** — candidate grid with LLM match-% badges (`scoreIdeas`, cached per prefs-set)
+  + your-trips launcher; brainstorming moved into the rail.
+- **R8 Polish** — z-index hero overlays, compact popover Account (was overflowing the top bar),
+  empty/loading/graceful states throughout, `rise`/`pulse` motion, OSM attribution kept.
+
+**End-to-end verified:** assistant proposal card (`~ Update Takayama`, `+ Add hiking day`) → Apply
+→ card flips to "✓ Applied · undo", Takayama card updates 3n→4n / Day 7-9→7-10 → Undo reverts.
+Production build clean (bundle 685 kB — Leaflet+Supabase+Phosphor; R-future code-split candidate).
+
+Schema bumped v4→v5 (nullable segment `lat`/`lng`, record `weather`, segment `detail`) — additive,
+v4 records load unchanged. Deleted superseded components (Sidebar, Workspace, ProposalView,
+Brainstorm, PlanChat, FlightSearch, Timeline). `localStorage` keys kept as `trippin.*`.
+
+Follow-ups (not blocking): geocoding accuracy is LLM-provided (Nominatim documented as fallback);
+bundle code-splitting; mobile layer (deferred). City briefing depends on the agent returning
+strict JSON — falls back gracefully otherwise.
