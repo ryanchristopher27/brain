@@ -446,3 +446,139 @@ Primary modules (new/changed):
 | Snapshot | Extend flight leg (v3→v4) | Durable detail must survive offer expiry; supersedes v3's "notes only" | 2026-09-06 |
 | Provider seam | `/flights/*` normalized | Swappable to Duffel/LetsFG; one credential boundary + one normalization for UI & chat | 2026-09-06 |
 | Booking | Deep-link hand-off only | Never in-app payment/ticketing | 2026-09-06 |
+
+---
+
+# Plan — Trippin' Cross-Device Sync + AI Capability Tiers
+
+Date: 2026-09-11
+Status: Draft
+Brainstorm: [docs/brainstorm.md](brainstorm.md) (2026-09-11 · Cross-device sync; 2026-09-11b · AI capability tiers)
+
+## Overview
+Make trips reachable across the user's devices (laptop + phone) while keeping the app **local-first**,
+and formalize an **AI capability tier** so the app "sits on top of" a locally-installed CLI agent.
+Two composable layers:
+1. **Sync:** a hosted **Supabase** DB (Postgres + Auth + row-level security) is the shared source of
+   truth; `localStorage` stays the fast, offline **working copy** and syncs to it. The web app is
+   **deployed** so any device can load it.
+2. **AI tier (AI-only gate):** manual create/edit of ideas/proposals/plans is **always available**;
+   the **AI features** (brainstorm chat, agentic edits, itinerary draft) require **a reachable CLI
+   agent** (local Claude Code helper) **or** a **BYOK** key — else they're disabled with a hint.
+
+**This reverses the founding "local-first, no backend, no accounts" decision** — a deliberate pivot,
+recorded below.
+
+## Goals & Success Criteria
+- **Same trips across devices.** ✅ Sign in on laptop + phone → both show/edit the same trips.
+- **Local-first preserved.** ✅ Logged-out (or offline) the app works exactly as today from
+  `localStorage`; sync is additive.
+- **No data lost on convergence.** ✅ First login merges local + cloud (last-write-wins per record);
+  deletes propagate (tombstones), not resurrect.
+- **AI-only gate.** ✅ With no agent and no key: manual editing works, AI affordances are disabled
+  with an "enable AI" hint. With a local CLI agent OR a key: AI works.
+- **Hosted app loads anywhere.** ✅ Deployed by URL; AI on the hosted build = BYOK; flights degrade
+  gracefully (local-only for v1).
+- **No secret leakage.** ✅ Supabase anon key is public-by-design (RLS enforces access); the Ignav
+  key never reaches the client bundle.
+
+## Scope
+### In Scope
+- Supabase project: `trips` table (jsonb rows) + RLS; `@supabase/supabase-js` client.
+- **Additive magic-link auth** (logged-out = current local-only behavior).
+- **Sync engine** at the `storage.js` seam: pull-merge on login, debounced push on change,
+  tombstones, record-level LWW; first-login merge/migration.
+- **AI-tier gating** in the UI (manual always on; AI features gated by agent-or-key + hint CTA).
+- **Deploy** the Vite frontend (Vercel) with Supabase public env vars.
+
+### Out of Scope (v1)
+- **Hosted flight search** — the Ignav proxy isn't deployed yet, so flights are **local-only** on the
+  hosted build (graceful "not configured" state). Serverless proxy is a later milestone (D6).
+- **Realtime live-sync** (Supabase subscriptions) — later (D7); v1 is pull-on-login + push-on-change.
+- Syncing **ideas / brainstorm / per-record chat** — trips only for v1.
+- **Multiple agent CLIs** — Claude-Code-first; registry shape only, others later.
+- Multi-user **sharing**; field-level conflict merge.
+
+## Tech Stack & Architecture
+Client stack unchanged (React 18 / Vite 5). New: **`@supabase/supabase-js`** (first runtime dep
+beyond React). Key decisions:
+
+- **Supabase, browser-direct + RLS.** Postgres + Auth managed; the browser talks to Supabase with
+  the **public anon key** and RLS scopes every row to `auth.uid()` — so there's **no data backend to
+  build or deploy**. Chosen over a custom backend (which we'd have to host) precisely because
+  accounts + RLS remove that need.
+- **`trips` table = one jsonb row per record.** Columns: `id` (the app's record id, PK),
+  `user_id` (`auth.uid()`), `kind`, `data` (jsonb — the whole versioned trip object; don't shred a
+  rich evolving shape into columns), `updated_at` (timestamptz), `deleted` (bool tombstone).
+  RLS policies: select/insert/update/delete where `user_id = auth.uid()`.
+- **Sync wraps the existing seam.** `loadTrips`/`saveTrips` stay the local core; a new `sync.js`
+  reconciles: on login/load → pull rows, **merge by `updated_at` (LWW per record)**, write both
+  sides; on local change → write local now, **debounced push** of changed rows; deletes write a
+  **tombstone** locally + remotely. `App` triggers pull on auth change and push on `trips` change.
+- **Auth is additive.** Magic-link (passwordless). Logged-out ⇒ no Supabase calls, pure local
+  (no regression). Logged-in ⇒ sync activates. First login **merges** local trips up.
+- **AI tier signal (already ~computed).** `aiAvailable = isLocalAvailable() || settings.anthropicKey`.
+  Thread it through so AI affordances (PlanChat send, agentic-edit entry, Brainstorm chat, draft)
+  disable + show a hint when false; manual forms/timeline/DnD/add-leg are never gated. Helper keeps a
+  small **agent-registry shape** (v1 = `{ claude }`) so more CLIs slot in later.
+- **Deploy.** `vite build` → static host (Vercel). Env: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
+  (public). On the hosted build the local helper is unreachable, so `flightsConfigured()` returns
+  false → flight search shows its existing not-configured state (no crash); AI uses BYOK.
+
+Primary modules (new/changed):
+- `src/lib/supabase.js` — client init from env (new).
+- `src/lib/sync.js` — pull/merge/push, tombstones, LWW, first-login merge (new).
+- `src/lib/storage.js` — local core unchanged; add delete-tombstone tracking for sync.
+- `src/components/Account.jsx` (or Settings section) — magic-link sign-in/out, sync status (new).
+- `src/App.jsx` — auth state, sync triggers, compute + pass `aiAvailable`.
+- AI-gated components — `PlanChat`, `Brainstorm`, `Workspace`/`ProposalView` (disable AI entry when `!aiAvailable`).
+- Deploy config — `.env` (VITE_ vars), host config, README.
+
+## Milestones
+| # | Milestone | Description | Dependencies |
+|---|-----------|-------------|--------------|
+| D1 | Supabase project + schema + client | Provision project; `trips` jsonb table + RLS; `supabase.js` client from env | — |
+| D2 | Additive auth (magic-link) | Sign-in/out UI; logged-out stays fully local; session wiring | D1 |
+| D3 | Sync engine + first-login merge | pull-merge on login, debounced push, tombstones, LWW; merge local↔cloud | D1, D2 |
+| D4 | AI capability-tier gating | `aiAvailable` (agent or key) gates AI affordances + hint; manual always on; agent-registry shape | — |
+| D5 | Deploy frontend + env | Vite build to Vercel; Supabase public env; hosted AI=BYOK; flights degrade to local-only | D1, D3 |
+| D6 | Hosted flights (serverless Ignav) | Deploy `/flights/*` proxy as a serverless fn (key in host env) → flights cross-device | D5 |
+| D7 | Realtime live-sync | Supabase subscriptions for live multi-device updates | D3 |
+
+## Risks & Mitigations
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| RLS misconfigured → cross-user data leak | Med | High | Strict `user_id = auth.uid()` policies; test a 2nd account can't read another's rows before D5 |
+| LWW drops a concurrent edit | Med | Med | Record-level LWW by `updated_at` (accepted v1); tombstones for deletes; realtime (D7) shrinks the window |
+| Ignav secret leaks into client bundle | Low | High | Ignav stays strictly in the helper/serverless fn; only `VITE_SUPABASE_*` (public) in the client |
+| Auth regresses local-only users | Low | Med | Auth strictly additive; logged-out path unchanged and tested |
+| New ops burden (Supabase + deploy) | High | Low | Accepted pivot cost; free tiers; document setup in README |
+| Local `claude -p` helper can't be hosted | — | — | Accepted: hosted AI = BYOK; local run keeps the free-agent path |
+
+## Dependencies
+- **Supabase project** (free tier) — provisioned at D1 (external).
+- **`@supabase/supabase-js`** npm package (new).
+- **Vercel** (or similar) account for D5 (external).
+- Existing Ignav helper unchanged; its hosting is D6.
+
+## Open Questions
+- Exact `trips` schema/indexes + the four RLS policies.
+- Delete-tombstone lifecycle (retention/GC) and how local deletes are tracked in `storage.js`.
+- Account UI placement (Settings vs a header control) and logged-in-but-no-AI vs logged-out messaging.
+- Debounce interval + push batching for many rapid edits.
+- Serverless target for D6 (Vercel function vs Supabase Edge Function) + where the Ignav key lives then.
+
+## Decisions Log
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Local-first-only → backend | Adopt Supabase + accounts | Cross-device requires a hosted, reachable store; reverses the founding decision (deliberate) | 2026-09-11 |
+| Data backend | Supabase browser-direct + RLS | Managed Postgres/Auth; anon key public + RLS ⇒ no backend to build/deploy | 2026-09-11 |
+| Posture | Local-first, DB as sync | Keep offline/fast working copy; DB is durable shared truth | 2026-09-11 |
+| Auth | Magic-link, additive | Passwordless; logged-out stays pure local (no regression) | 2026-09-11 |
+| Conflict model | Record-level LWW + tombstones | Pragmatic v1; field-merge out of scope | 2026-09-11 |
+| AI access | AI-only gate (agent OR key) | Manual editing always free; AI needs a local CLI agent or BYOK | 2026-09-11 |
+| Agents | Claude-Code-first, registry shape | Build on `claude -p`; add other CLIs later without rewrite | 2026-09-11 |
+| Hosted flights | Local-only for v1 | Keep deploy lean; graceful not-configured degrade; serverless proxy = D6 | 2026-09-11 |
+| Realtime | Deferred (D7) | v1 pull-on-login + push-on-change is enough | 2026-09-11 |
+| Sync scope | Trips only (v1) | Ideas/brainstorm/chat later | 2026-09-11 |
+| Deploy target | Vercel (static Vite build) | Simple static host; Supabase public env vars | 2026-09-11 |

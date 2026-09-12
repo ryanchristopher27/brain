@@ -286,3 +286,143 @@ nothing auto-replaces existing legs.
 4. Sequence milestones, e.g.: **F1 helper endpoints + token cache → F2 offer→legs mapping +
    flight patch op → F3 inline search UI (autocomplete, results, add) → F4 states/polish +
    README setup → F5 (later) agent-chat search.**
+
+---
+
+## 2026-09-11 · Cross-device sync (Supabase) — reverses local-first-only
+
+### Problem / Opportunity
+Trips live only in one browser's `localStorage` (per-origin), so they don't survive a browser
+wipe and can't be reached from a second device (e.g. a phone). We want the **same trips on
+laptop + phone**, while keeping the app's fast, offline **local-first** feel.
+
+### Goals
+- Access and edit the same trips across devices (laptop + phone).
+- Keep **local-first**: the app stays fast/offline using `localStorage` as the working copy; a
+  hosted DB is the durable, shared source of truth it syncs to.
+- Minimal new surface — reuse the clean `loadTrips`/`saveTrips` seam in `storage.js`.
+
+### Audience
+Single user (Ryan) across their own devices. (Not multi-user sharing — but accounts give a clean
+identity boundary and room to grow.)
+
+### Constraints
+- **Reverses a founding decision** ("local-first, `localStorage` only, no backend DB, no accounts").
+  This is a deliberate pivot — record it in the plan's Decisions Log + architecture + README.
+- Node 18 / React 18 / Vite 5 stack unchanged on the client.
+- Cross-device ⇒ the store must be **hosted/reachable** (not the localhost helper or local SQLite).
+
+### Decided (locked via this brainstorm)
+- **Cross-device**, **local-first with the DB as backup/sync** (not fully server-only).
+- **Accounts via Supabase Auth** + Postgres + row-level security; browser talks to Supabase
+  directly (anon key is public by design; RLS enforces per-user access) — **no data backend to build**.
+- **Deploy the web app** (static host, e.g. Vercel/Netlify) so any device loads it by URL.
+
+### Ideas & Directions
+
+#### 1 · Data model (Supabase Postgres)
+One `trips` table, **one row per record** (proposal or plan): `id` (the app's record id),
+`user_id` (`auth.uid()`), `kind`, `data` (**jsonb** — the whole trip record; the shape is already a
+rich, versioned JSON object, so blob-store it rather than shredding into columns), `updated_at`
+(timestamptz), `deleted` (bool tombstone). **RLS:** every row scoped to `user_id = auth.uid()`.
+
+#### 2 · Auth (additive, preserves local-first)
+Supabase Auth, **passwordless magic-link** recommended (no password to manage). Crucially,
+**auth is optional**: logged-out ⇒ the app behaves exactly as today (pure local). Logged-in ⇒ the
+sync layer activates. So we don't regress the local-only experience for casual use.
+
+#### 3 · Sync engine (the real work)
+Wrap the existing `storage.js` seam:
+- **On login / load:** pull the user's remote rows, **merge with local by `updated_at`
+  (last-write-wins per record)**, write the merged set to both local and remote.
+- **On local change** (`saveTrips`): write `localStorage` immediately (unchanged), then **push**
+  changed records to Supabase (debounced).
+- **Deletes need tombstones** (`deleted=true` + `updated_at`) so a delete on one device isn't
+  resurrected by the other's stale copy.
+- **Realtime** (Supabase subscription for live multi-device updates) is a nice **later**
+  enhancement; v1 = pull-on-login + push-on-change.
+- Conflict model: **record-level last-write-wins** (field-level merge is out of scope).
+
+#### 4 · Deployment
+Build the Vite app to static assets, deploy to **Vercel/Netlify**; Supabase URL + anon key via env
+(public, safe). This is what makes the phone able to load the app at all.
+
+#### 5 · The helper ripple (headline decision) ⚠️
+The deployed app can't reach the localhost `server/index.mjs`, so:
+- **AI on the hosted app → BYOK** (Anthropic key, browser-direct; already built). The local
+  `claude -p` helper stays a **local-dev convenience** — it cannot be hosted (it shells out to the
+  user's own Claude Code).
+- **Flight search on the hosted app → the Ignav helper must be hosted** (a small serverless
+  function holding the Ignav key), **or flights are disabled on the hosted build**. This is the
+  gnarliest scope question and must be decided in `/plan`.
+
+#### 6 · Migration / first login
+On first login on a device, **merge** existing local trips with whatever's already in the cloud
+(same LWW rule), so nothing is lost and both devices converge.
+
+### Recommendations
+1. **Supabase browser-direct + RLS**, `trips` table as `jsonb` rows — least code, no data backend.
+2. **Magic-link auth, additive** — logged-out stays fully local-first.
+3. **Sync at the `storage.js` seam**: pull-merge-on-login + debounced push-on-change + tombstones + LWW.
+4. **Deploy frontend to Vercel**; Supabase keys via env.
+5. **v1 scope = trips only** (defer syncing ideas/brainstorm/chat).
+6. **Helper ripple:** hosted AI = BYOK; **host the Ignav helper as a serverless function** (recommended) or defer flights on the hosted build.
+
+### Suggested Decisions (confirm in /plan)
+- Auth method: magic-link (recommend) vs email+password vs OAuth.
+- Sync scope: trips only for v1 (recommend) vs also ideas/chat.
+- Ignav helper: host it (serverless) now vs flights hosted-disabled for v1.
+- Realtime live-sync: defer (recommend) vs include in v1.
+
+### Open Questions (for /plan)
+- Exact `trips` schema + RLS policies + indexes.
+- Where login/account UI lives, and the logged-out→logged-in transition (first-login merge).
+- Sync triggers, debounce interval, and tombstone lifecycle.
+- Serverless hosting for the Ignav helper (Vercel function? Supabase Edge Function?) + where its key lives when hosted.
+- Env/config split (Supabase public keys in the client build; Ignav secret server-side).
+
+### Next Steps — what /plan needs
+1. Confirm the suggested decisions (esp. the Ignav-helper hosting call).
+2. Provision a Supabase project; define schema + RLS.
+3. Specify the sync layer contract around `loadTrips`/`saveTrips` + first-login merge.
+4. Sequence milestones, e.g.: **D1 Supabase project + schema/RLS + client → D2 auth (additive,
+   logged-out stays local) → D3 sync engine (pull-merge / push / tombstones / LWW) + first-login
+   migration → D4 deploy frontend + env → D5 hosted flights (Ignav serverless) / AI BYOK wiring →
+   D6 (later) realtime live-sync.**
+
+### 2026-09-11b · AI capability tiers — "sits on top of your CLI agent"
+Refines the AI/helper model above (and cleanly resolves the "helper ripple"). Positions the app as
+a GUI on top of a locally-installed agent CLI, with graceful fallbacks.
+
+**Decided:**
+- **AI-only gate (not a hard view-only tier):** manual create/edit of ideas, proposals, and plans is
+  **always available** on any device with no agent and no key. Only the **AI features** —
+  brainstorm chat, agentic proposal/plan edits, and itinerary drafting — require **either** a
+  reachable **CLI agent** (local Claude Code helper) **or** a **BYOK** key.
+- **Claude Code first, built to expand:** v1 detects/uses `claude -p` (as today); shape the helper
+  so more agent CLIs can be added later without a rewrite.
+
+**Tier signal:** already essentially computed — `isLocalAvailable()` (helper reachable + `claude`
+present) OR a BYOK key ⇒ "AI enabled." The new work is having this **drive the UI**: when AI is
+unavailable, disable/hide AI affordances (chat send, agentic-edit, draft) with a hint —
+*"Enable AI: run a CLI agent locally, or add an API key in Settings"* — while leaving manual
+editing fully functional.
+
+**Extensibility shape (for later):** a small **agent registry** in the helper — `name → { cmd, args,
+detect }` — with `/ai/health` reporting which agents are present and the engine routing to a chosen
+one. v1 registry = `{ claude }`. Adding `gemini`/`codex`/etc. later becomes a registry entry, not a
+rewrite.
+
+**Distinctions to keep straight:**
+- **Flight search is NOT AI-gated.** Inline search (F3) hits the Ignav helper directly; only
+  *chat-driven* search (F4) rides the AI turn. So flight availability depends on the **Ignav helper
+  being reachable** (hosted or local), independent of the AI tier.
+- **Composition with cross-device:** identity/sync (Supabase accounts) = *whose* trips + *cross-device*;
+  the AI tier = *can this device run AI*. They stack: phone loads the deployed app, signs in, edits
+  manually + views synced trips, AI via BYOK; laptop with Claude Code gets AI free via the local agent.
+
+**Open questions (for /plan):**
+- Exactly which affordances are "AI" and get gated vs always-on (draft/chat/agentic-edit = gated;
+  manual forms, timeline, DnD, add-leg = always on).
+- Where the "enable AI" hint/CTA lives, and whether logged-in-but-no-AI differs from logged-out.
+- Minimal helper shape that anticipates the agent registry without over-building for v1.
