@@ -272,3 +272,49 @@ Brainstorm, PlanChat, FlightSearch, Timeline). `localStorage` keys kept as `trip
 Follow-ups (not blocking): geocoding accuracy is LLM-provided (Nominatim documented as fallback);
 bundle code-splitting; mobile layer (deferred). City briefing depends on the agent returning
 strict JSON — falls back gracefully otherwise.
+
+---
+
+## 2026-09-12 · Inter-city transportation (v6, T1–T6) — build review
+
+Generalized flights→travel and made "how you get there" first-class. Verified in-app on the
+Tokyo/Takayama/Kyoto plan with a San Francisco home.
+
+- **T1 model+migration** — `flights[]`→`travel[]` with `mode`; `startLocation`/`endLocation`;
+  SCHEMA_VERSION 6; patch target `travel` (+`flight` alias); escalate/aiClient/budget updated.
+  Verified a v5 flights record migrates to a travel leg with cost intact, `flights` key dropped.
+- **T2 derive** — `deriveTransport()` (mode/duration/cost/note); TripPage lazily fills missing
+  hops (cached). Verified: Tokyo→Takayama & Takayama→Kyoto came back as train, ~3.5h, ~$100.
+- **T3 connectors** — `TravelConnector` between day cards (mode icon + duration).
+- **T4 map** — per-mode dashed polylines + home diamond markers; home geocoded (SF → 37.77,-122.42).
+- **T5 Getting around** — full hop list incl. home bookends (SF→Tokyo flight 12h, …, Kyoto→SF),
+  per-hop flight Search; date-finder kept for dates-open.
+- **T6 editing** — per-leg mode select + duration/cost in TripEditor; start/end location fields.
+
+Decisions honored: hops keyed by segment pair (survive reorder — tested after an assistant
+"optimize route"); `flight` op alias; hop duration display-only; schema additive (v5 loads clean).
+Follow-ups: home IATA still manual/blank (flight search origin is entered on the Flights page);
+transoceanic home markers zoom the hero map way out (correct, but Japan detail shrinks).
+
+---
+
+## 2026-09-12 · Real accounts (v7, U1–U4) — build review
+
+Added real login on top of Supabase Auth. Build clean; UI states verified in-app (signed out).
+
+- **U1 flows** — new `lib/auth.js`: signUpPassword, signInPassword, signInGoogle, sendMagicLink,
+  sendReset, changePassword, signOut; App handles the `PASSWORD_RECOVERY` event → opens the modal in
+  set-new-password mode. Magic link retained.
+- **U2 modal** — new `Auth.jsx`: Log in / Create account tabs, Continue with Google, email+password
+  (show/hide, 8-char min hint), Forgot password, "email me a magic link" fallback, inline
+  error/notice states. Verified: login + create-account screens render with all controls.
+- **U3 account** — `Account.jsx` is now a signed-out "Sign in" trigger + a signed-in menu (email,
+  change password → reuses the recovery set-password flow, sign out).
+- **U4 config** — README "Accounts / sign-in — setup": enable Google (client id/secret), redirect
+  URLs (localhost + Vercel), keep Confirm-email ON. Dashboard config + real credential login are
+  user-performed (assistant does not enter credentials).
+
+Decisions honored: password+Google primary, magic-link backup; email-confirm ON default; Google
+only for v1; BYOK/settings stay device-local; RLS/sync unchanged (session is a session).
+Carry-over (magic-link user → set password → same trips) is inherent to Supabase (same email = same
+user) — to confirm during the user's real-login test.

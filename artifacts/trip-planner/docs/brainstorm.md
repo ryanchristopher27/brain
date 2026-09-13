@@ -550,3 +550,196 @@ no agent/key. Fits the agent-native identity and needs no new external API.
    (map hero + day-by-day + budget donut) → R4 dates-open date-finder (real Ignav) → R5 Flights
    page → R6 City detail → R7 Ideas grid + LLM match-% + weather → R8 polish + missing states.**
    (Mobile = a separate later phase.)
+
+---
+
+## 2026-09-12 · Inter-city transportation ("how you get there")
+
+### Problem / Opportunity
+A trip knows its **cities** (segments, ordered, with coords) and the map draws a dashed line
+between them — but that line carries no **mode, time, or cost**. The only travel concept,
+`flights[]`, is air-specific and lumped in one "Flights & travel" section, not tied to the actual
+A→B hops. So "how do I get from Tokyo to Kyoto?" has nowhere to live. We want the *how* of each
+hop visible on the main page.
+
+### Goals
+- Represent each **hop** between consecutive stops with a **mode** (flight / train / bus / car /
+  ferry / walk), duration, cost, and (for flights) booking.
+- Make the *how* obvious on the main surfaces: **connectors between day cards**, **mode-styled map
+  legs**, and a **"Getting around" list**.
+- Let the trip know where it **starts and ends** (home origin/return), so the first/last hops and
+  flight search have a real origin.
+- Stay agent-native + local-first: LLM-derive ground transport (cached), Ignav for flights,
+  manual override everywhere.
+
+### Audience
+Ryan + anyone he shares a trip with — the plan should read like an itinerary, travel included.
+
+### Constraints
+- `flight` is baked into the model (patch op target `flight`, migration defaults, PLAN_ONLY_FIELDS,
+  aiClient op protocol) → generalizing needs a migration + protocol update, done carefully.
+- No free real-time train/bus API worth integrating → ground transport is **LLM-estimated**
+  ("typical" mode/duration/rough cost), same fidelity posture as weather/coords.
+- Hops are between **adjacent** segments; the assistant can reorder the route, so legs must survive
+  reordering.
+
+### Decided (locked via this brainstorm)
+- **Direction A** — generalize `flights[]` into a single **`travel[]`** array of legs, each with a
+  `mode` (flight is one mode). One model, one "Getting around" section.
+- **Trip start/end location** — add a home **origin** and **return** location to the trip; the
+  first hop is origin→stop 1 and the last is stop N→return (return defaults to origin).
+- **Non-flight transport = LLM-derived** (cached on the leg); flights stay real via Ignav; manual
+  override always.
+
+### Ideas & Directions
+
+#### 1 · Data model — `travel[]` legs with `mode`
+Rename `flights[]` → `travel[]`. Leg shape keeps the durable flight snapshot fields and adds:
+`mode` ('flight'|'train'|'bus'|'car'|'ferry'|'walk'|'other'), `fromSegmentId`/`toSegmentId`
+(linking the hop to the transition; sentinel `origin`/`return` for the home bookends), and the
+existing from/to/date/carrier/times/duration/cost/bookingUrl/notes. Migration: existing
+`flights[]` → `travel[]` with `mode:'flight'`. Patch op target `flight` → `travel` (with a
+back-compat alias so old/loose model replies still land). PLAN_ONLY_FIELDS: `flights` → `travel`.
+
+#### 2 · Trip start/end location (home)
+Add `startLocation` and `endLocation` to the trip: `{ name, iata?, lat?, lng? }` (coords/IATA
+LLM-derivable, like segment coords). `endLocation` defaults to `startLocation` (round trip).
+Feeds: default **origin for flight search / date-finder**, **home markers** on the map, and the
+**bookend hops** in Getting-around. General enough to live on proposals too (rough), with committed
+times/cost plan-only.
+
+#### 3 · Hop keying + reorder safety
+Store each leg by `(fromSegmentId → toSegmentId)`. At render, resolve the leg for each **adjacent**
+ordered pair; a pair with no stored leg is "unknown" → lazily derived. A reorder changes adjacency:
+new pairs derive fresh legs, orphaned legs are harmless (optionally GC'd on save).
+
+#### 4 · Data source (fidelity split)
+- **Flights** → real Ignav (already wired; Getting-around's flight hops keep the search + booking).
+- **Ground hops** → `deriveTransport(fromCity, toCity)` (LLM): `{ mode, durationMinutes, cost,
+  note }`, cached on the leg — mirrors weather/coords. The agent also **infers the default mode**
+  per hop (short intercity → train; ocean crossing → flight).
+- **Manual override** — set mode/times/cost by hand per hop.
+
+#### 5 · Display — day-card connectors (primary)
+Between consecutive day-by-day cards, a small **connector**: mode icon + duration (`🚄 2h15`),
+click → the hop's detail / search. Most literal answer to "how you get there," right in the flow.
+
+#### 6 · Display — mode-styled map legs + home markers
+Per-mode polyline styling (train solid, flight dashed, drive dotted) with a mid-line chip
+(`🚄 2h15`); distinct **home** start/end markers. Makes the hero self-explanatory.
+
+#### 7 · Display — "Getting around" section (evolved Flights & travel)
+Each hop as a row (incl. home bookends): mode icon · from→to · duration · cost · per-hop action
+("search flights" for air, "how do I get there?" to (re)derive ground). Replaces the flat flights
+list; flight search + booking live here per-hop.
+
+#### 8 · Editing
+Manual mode/times/cost/booking per hop (TripEditor + a Getting-around inline editor); start/end
+location fields; assistant ops can add/update/remove travel legs and set mode.
+
+### Recommendations
+1. Land the **model + migration** first (flights→travel, mode, start/end location) so everything
+   else builds on it without churn.
+2. Then **LLM-derive + lazy auto-fill** hops (cached), Ignav unchanged for air.
+3. Ship display in impact order: **day-card connectors → map legs → Getting-around list**.
+4. Keep the proposal/plan fidelity split (mode + rough duration on proposals; times/cost/booking on
+   plans).
+
+### Suggested Decisions (confirm in /plan)
+- Leg keying by segment-pair (recommend) + orphan GC on save.
+- Home location shape `{ name, iata?, lat?, lng? }`; `endLocation` defaults to `startLocation`.
+- Whether a hop's duration affects the day math (recommend: **no** for v1 — display only).
+- Op-protocol back-compat: accept both `flight` and `travel` targets during transition.
+
+### Open Questions (for /plan)
+- Migration details (flights→travel; keep localStorage keys) + escalation copying `travel`.
+- IATA resolution for home + segments (LLM-derive nearest airport vs. user-entered).
+- Icon set (Phosphor: AirplaneTilt, Train, Bus, Car, Boat, PersonSimpleWalk) + map leg styling.
+- Do bookend home hops appear on proposals, or plans only?
+
+### Next Steps — what /plan needs
+Sequence, roughly: **T1 model+migration (travel[]+mode, start/end location) → T2 LLM-derive +
+lazy auto-fill hops → T3 day-card connectors → T4 mode-styled map legs + home markers →
+T5 Getting-around section (per-hop flight search/booking) → T6 editing + polish.**
+
+---
+
+## 2026-09-12 · Real accounts (password + Google, magic link as backup)
+
+### Problem / Opportunity
+Auth today is **magic-link only** (`supabase.auth.signInWithOtp` in `App.jsx`; a tiny `Account`
+popover). It works but forces an email round-trip every time and doesn't feel like "an account you
+log into." We want real accounts: **email + password** and **Google (OAuth)** as the primary ways
+in, keeping **magic link** as a backup. Everything else — RLS, the sync engine, local-first — is
+unchanged; a logged-in user is a logged-in user regardless of method.
+
+### Goals
+- Sign up / log in with **email + password**.
+- One-click **Google** sign-in.
+- Keep **magic link** available as a secondary option.
+- A real **auth screen** (log in / create account) + a signed-in **account menu** (sign out,
+  change password).
+- No regression: signed-out = pure local; existing magic-link users carry over (same email = same
+  Supabase user, so their synced trips just work).
+
+### Audience
+Ryan + anyone he shares the deployed app with — returning users who want to just log in.
+
+### Constraints
+- Build on existing **Supabase Auth** (already wired) — no new backend.
+- OAuth + password-reset links need **redirect-URL allow-listing** (same localhost/Vercel step as
+  magic links). Google provider must be enabled in the Supabase dashboard.
+- **Email confirmation** is a Supabase project toggle (default: keep ON — verified emails; reset
+  needs working email anyway).
+- Assistant caveat: the auth UI is built by us, but real credentials/sign-up are user-performed;
+  dashboard settings (providers, redirect URLs, confirm toggle) are user-run.
+
+### Decided (locked via this brainstorm)
+- **Primary methods: email+password + Google OAuth.** Magic link kept as a backup option.
+- Default **email confirmation ON** (flip in dashboard if we want instant sign-up).
+
+### Ideas & Directions
+
+#### 1 · Auth flows (Supabase)
+`signUp({ email, password, options:{ emailRedirectTo } })`, `signInWithPassword({ email, password })`,
+`signInWithOAuth({ provider:'google', options:{ redirectTo } })`, `resetPasswordForEmail(email,
+{ redirectTo })`, `updateUser({ password })`. Keep `signInWithOtp` for the magic-link fallback.
+Session persistence + auto-refresh are already handled by the client — the win is the login *flow*.
+
+#### 2 · Auth UI (the new surface)
+A proper **auth modal/screen**: tabs **Log in / Create account**; a **Continue with Google** button;
+email + password fields (show/hide); **Forgot password** (sends reset email); a subtle **"email me a
+magic link instead"** fallback; clear inline error/success states (bad password, unconfirmed email,
+rate limit). Replaces the tiny `Account` popover's form (the top-bar entry point stays).
+
+#### 3 · Signed-in account menu
+The cloud/account control becomes a small menu: email/display name, **Sign out**, **Change
+password** (`updateUser`), and (later) "sign out everywhere." Optional display name/avatar is a
+stretch.
+
+#### 4 · Config + carry-over
+Enable Google in Supabase; allow-list redirect URLs (localhost:5173/5174 + Vercel) for OAuth +
+reset; decide the email-confirm toggle. Existing magic-link users: setting a password for the same
+email attaches to the same user (trips carry over) — verify.
+
+### Recommendations
+1. Land the **flows** in the supabase/App layer first (additive to magic link).
+2. Build the **auth modal** as the main deliverable (this is where the UX lives).
+3. Add the **account menu** (sign out + change password).
+4. Do **dashboard config + end-to-end verify** last (user-run steps + a real login test).
+
+### Suggested Decisions (confirm in /plan)
+- Methods: password + Google primary, magic link backup (locked).
+- Email confirmation: keep ON (recommend) — reset needs email regardless.
+- Providers: Google only for v1 (Apple/GitHub easy later).
+- BYOK keys/settings stay **device-local** (not per-account) for now.
+
+### Open Questions (for /plan)
+- Password rules/strength UI (min length via Supabase; surface a hint).
+- Reset-password landing: a dedicated in-app route/screen vs. Supabase-hosted.
+- Whether to show a first-run "create account" nudge or keep auth opt-in.
+
+### Next Steps — what /plan needs
+Sequence, roughly: **U1 auth flows (password + Google + reset; keep magic link) → U2 auth modal
+(log in / create account / Google / forgot / magic-link fallback) → U3 account menu (sign out,
+change password) → U4 dashboard config + redirect URLs + end-to-end verification.**

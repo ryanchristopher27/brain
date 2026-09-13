@@ -737,3 +737,219 @@ paragraph + tag row + quick-facts card; tabs (Overview built, rest stubbed); age
 | Date-finder + budget | Real (Ignav + our costs) | User-decided fidelity split | 2026-09-12 |
 | Assistant | Global context-aware rail = PlanChat evolved | Reuse thread/ops/undo; add page-context | 2026-09-12 |
 | Schema | Bump to v5; add nullable lat/lng/weather/coordsFetched | Non-destructive; v4 loads unchanged | 2026-09-12 |
+
+---
+
+# Plan — Odyssai: Inter-city Transportation (v6)
+
+Date: 2026-09-12
+Status: Active — T1–T6 implemented & verified 2026-09-12
+Brainstorm: [docs/brainstorm.md](brainstorm.md) (2026-09-12 · Inter-city transportation section)
+
+## Overview
+Make **how you travel between stops** first-class. Generalize the air-only `flights[]` into a single
+**`travel[]`** array of legs, each with a **mode** (flight/train/bus/car/ferry/walk); add a trip
+**start/end location** (home) so the first/last hops and flight search have a real origin;
+LLM-derive non-flight hops (cached, like weather/coords) while flights stay real via Ignav; and
+surface the *how* on the main page — connectors between day cards, mode-styled map legs, and an
+evolved **"Getting around"** list. Additive and local-first; proposals show mode + rough duration,
+plans add times/cost/booking.
+
+## Goals & Success Criteria
+- One `travel[]` model with `mode`; existing `flights[]` migrate in as `mode:'flight'` with no data
+  loss; patch ops + escalation + AI protocol updated (with `flight`→`travel` back-compat).
+- Each adjacent stop pair shows a hop (mode + duration) that **survives route reorders** (keyed by
+  segment pair, re-derived on adjacency change).
+- Ground hops are **LLM-derived + cached**; flights keep real Ignav search/booking; every hop is
+  manually editable.
+- Trip carries **startLocation/endLocation**; flight search/date-finder default their origin from it;
+  home markers appear on the map; bookend hops (home→first, last→home) show in Getting-around.
+- The *how* is visible without opening an editor: day-card connectors + map leg labels.
+
+## Scope
+### In Scope
+- Model: `travel[]` + `mode`; `startLocation`/`endLocation`; v6 migration; patch/escalate/aiClient updates.
+- `deriveTransport()` (LLM) + lazy auto-fill of missing hops (cached), agent-inferred default mode.
+- Display: day-card connectors, mode-styled map polylines + labels + home markers, Getting-around list.
+- Editing: per-hop mode/times/cost/booking (TripEditor + Getting-around inline); start/end fields; assistant ops.
+### Out of Scope
+- Real train/bus schedule APIs (LLM estimate only).
+- Multi-modal single-hop breakdowns (e.g. train + transfer) — one primary mode per hop for v1.
+- Hop duration feeding the day math (display-only in v1).
+- Mobile-specific transport UI beyond what the responsive layout already gives.
+
+## Tech Stack & Architecture
+- **Model (`lib/trip.js`)**: rename the factory to `newTravelLeg` (keep `newFlight` as an alias),
+  add `mode` + `fromSegmentId`/`toSegmentId` (sentinels `'origin'`/`'return'` for home bookends);
+  add `startLocation`/`endLocation` `{ name, iata, lat, lng }` to `newTrip`. `PLAN_ONLY_FIELDS`:
+  `flights`→`travel`. `SCHEMA_VERSION` → 6.
+- **Migration (`lib/migrate.js`)**: `flights[]` → `travel[]` (each `mode:'flight'`); default
+  `startLocation`/`endLocation` to null; `ensureArrays` learns `travel`. Idempotent; keeps
+  `trippin.*` localStorage keys.
+- **Patch (`lib/patch.js`)**: `ITEM_KEYS`/`ITEM_FACTORIES` gain `travel`; accept op target `travel`
+  **and** legacy `flight` (aliased to `travel`); proposals still strip committed leg fields.
+- **Escalation (`lib/escalate.js`)**: copy `travel` (was `flights`); carry start/end location.
+- **AI (`lib/aiClient.js`)**: op protocol documents `travel` legs with `mode`; flight-search intent
+  unchanged. **`lib/derive.js`**: `deriveTransport(fromCity,toCity,settings)` → `{ mode,
+  durationMinutes, cost, note }`, cached on the leg; graceful/gated like weather.
+- **Flights (`lib/flights.js`)**: `offerToLegs` sets `mode:'flight'`; unchanged otherwise.
+- **UI**: `components/TravelConnector.jsx` (day-card connector), `OdMap` per-mode polyline styling +
+  home markers + leg labels, `pages/TripPage.jsx` Getting-around section (evolved Flights & travel)
+  + start/end location, `components/TripEditor.jsx` per-hop editor + home fields. Phosphor icons:
+  AirplaneTilt, Train, Bus, Car, Boat, PersonSimpleWalk.
+- **Hop resolution helper**: `travelForPair(record, fromSegId, toSegId)` + a builder that walks the
+  ordered segments (plus home bookends) to produce the render list; orphaned legs GC'd on save.
+
+## Milestones
+| # | Milestone | Description | Dependencies |
+|---|-----------|-------------|--------------|
+| T1 | Model + migration | `travel[]` + `mode`, `startLocation`/`endLocation`, v6 migration (flights→travel), patch/escalate/aiClient updates (flight→travel back-compat) | — |
+| T2 | LLM-derive transport | `deriveTransport()` + lazy auto-fill of missing hops (cached, gated, agent-inferred mode); Ignav unchanged for flights | T1 |
+| T3 | Day-card connectors | `TravelConnector` between day-by-day cards — mode icon + duration; click → hop detail/search | T1, T2 |
+| T4 | Map legs + home markers | Per-mode polyline styling + mid-line labels; home start/end markers from start/end location | T1, T2 |
+| T5 | Getting-around section | Evolved Flights & travel: hop rows incl. home bookends; per-hop flight search/booking (Ignav) + "how do I get there?" | T1, T2 |
+| T6 | Editing + polish | Per-hop mode/times/cost/booking (TripEditor + inline); start/end location fields; assistant ops; empty/loading states; verify | T3, T4, T5 |
+
+## Task Breakdown (mid depth)
+**T1** — bump schema to 6; add fields + factories + aliases; migrate `flights`→`travel`; update
+`patch.js` targets (travel + flight alias) and `PLAN_ONLY_FIELDS`; `escalate.js` copies travel +
+home; `aiClient.js` op protocol wording; `ensureArrays` includes `travel`. Unit-check migration
+idempotency + that a v5 record with flights loads as travel.
+**T2** — `deriveTransport()` prompt (mode/duration/cost/note, strict JSON); a lazy effect on
+TripPage filling missing adjacent-pair hops (cached via onPatch), skipping flight hops (leave for
+Ignav) and respecting `aiAvailable`; agent default-mode inference in the same call.
+**T3** — `TravelConnector` component; insert between day cards (horizontal) and between itinerary
+groups; graceful "add travel" when unknown.
+**T4** — OdMap: accept per-leg `mode` for styling + a label; render home markers (distinct icon)
+from start/end location; keep numbered stop markers + focus behavior.
+**T5** — Getting-around list: build the ordered hop list (home → stops → home); per-hop row with
+actions; flight hops open the existing search/booking; ground hops show derived info + re-derive.
+**T6** — TripEditor: per-hop editor (mode select, times, cost, booking) replacing the flat flights
+editor; start/end location inputs (with LLM coord/IATA fill); assistant `travel` ops end-to-end;
+polish + in-app verification.
+
+## Risks & Mitigations
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| flights→travel migration breaks saved plans | Med | High | Idempotent migrate + keep newFlight alias + verify v5-with-flights loads; localStorage keys unchanged |
+| AI replies still target `flight` | Med | Med | Accept `flight` as alias for `travel` in patch.js |
+| Reorder orphans/mismatches hops | Med | Med | Key by segment pair; resolve per adjacent pair; GC orphans on save |
+| LLM transport wrong/variable | Med | Low | "Typical" framing; manual override; cached once; graceful when no AI |
+| Home IATA ambiguous for flight search | Low | Med | LLM nearest-airport suggestion + user-editable origin |
+
+## Dependencies
+- Existing: Ignav (flight hops), agent-or-BYOK (derive transport, home coords/IATA), Phosphor icons.
+- No new external APIs.
+
+## Open Questions
+- LLM accuracy for mode/duration at intercity granularity — validate in T2; manual override covers gaps.
+- Home IATA resolution (LLM nearest-airport vs. explicit entry) — settle in T6.
+- Whether home bookend hops show on proposals or plans only — recommend plans only (air/commit-ish).
+
+## Decisions Log
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Transport model | Generalize `flights[]`→`travel[]` with `mode` | One model/section; matches reality | 2026-09-12 |
+| Trip endpoints | Add start/end location (home) | Real origin for hops + flight search; map bookends | 2026-09-12 |
+| Ground-transport data | LLM-derived, cached, manual override | No free schedule API; agent-native like weather | 2026-09-12 |
+| Hop keying | By (fromSegmentId→toSegmentId), resolved per adjacent pair | Survives route reorder | 2026-09-12 |
+| Op back-compat | Accept `flight` as alias for `travel` | Loose/old AI replies still apply | 2026-09-12 |
+| Day math | Hop duration is display-only in v1 | Keep scope tight; avoid reflowing day ranges | 2026-09-12 |
+| Schema | Bump to v6 (travel[], mode, start/end location); additive | v5 records migrate; no data loss | 2026-09-12 |
+
+---
+
+# Plan — Odyssai: Real Accounts (v7 · password + Google, magic-link backup)
+
+Date: 2026-09-12
+Status: Active — U1–U4 implemented; dashboard config + real-login test are user-run (2026-09-12)
+Brainstorm: [docs/brainstorm.md](brainstorm.md) (2026-09-12 · Real accounts section)
+
+## Overview
+Add real login accounts on top of the existing Supabase Auth: **email + password** and **Google
+OAuth** as the primary ways in, with **magic link** kept as a backup. Ships a proper auth screen
+(log in / create account) and a signed-in account menu (sign out, change password). RLS, the sync
+engine, and local-first are unchanged — a logged-in user is a logged-in user regardless of method,
+and existing magic-link users carry over (same email = same Supabase user).
+
+## Goals & Success Criteria
+- Create an account and log in with **email + password**; **Continue with Google** works one-click.
+- **Magic link** still available as a secondary option; **Forgot password** sends a reset email.
+- Signed-in **account menu**: email, sign out, change password.
+- No regression: signed-out = pure local; a magic-link user who sets a password keeps their trips.
+- Clear error/success states (bad credentials, unconfirmed email, rate limit).
+
+## Scope
+### In Scope
+- Supabase flows: signUp, signInWithPassword, signInWithOAuth(google), resetPasswordForEmail,
+  updateUser(password); keep signInWithOtp.
+- Auth modal UI (tabs + Google + password + forgot + magic-link fallback + states).
+- Account menu (sign out, change password); reset-password landing handling.
+- Config guidance (Google provider, redirect URLs, email-confirm) — user-run, documented.
+### Out of Scope
+- Providers beyond Google (Apple/GitHub) — easy later.
+- Passkeys/WebAuthn; "sign out everywhere"; profile avatars.
+- Per-account sync of BYOK keys/settings (stay device-local).
+- Any change to RLS / sync / data model.
+
+## Tech Stack & Architecture
+- **`lib/supabase.js` / `App.jsx`**: add auth helpers alongside the existing `signIn`(otp)/`signOut`
+  — `signUpPassword`, `signInPassword`, `signInGoogle`, `sendReset`, `changePassword`. Session
+  state + sync effects unchanged (they key off `session.user.id`).
+- **`components/Auth.jsx`** (new): the auth modal — Log in / Create account tabs, Continue with
+  Google, email+password (show/hide), Forgot password, "email me a magic link instead," inline
+  errors. Opened from the top-bar account control.
+- **`components/Account.jsx`**: becomes the signed-in **account menu** (email, sign out, change
+  password) + the trigger that opens `Auth` when signed out.
+- **Reset landing**: `resetPasswordForEmail(redirectTo=origin)`; on load, if a recovery session is
+  present, show a "set a new password" state (reuses the Auth modal). Detected via Supabase's
+  `onAuthStateChange` `PASSWORD_RECOVERY` event.
+- **Config (user-run)**: enable Google in Supabase Auth providers; add redirect URLs
+  (localhost:5173/5174 + Vercel) for OAuth + reset; email-confirm toggle (default ON).
+
+## Milestones
+| # | Milestone | Description | Dependencies |
+|---|-----------|-------------|--------------|
+| U1 | Auth flows | supabase/App helpers: signUp, signInPassword, signInGoogle, sendReset, changePassword (keep magic link); PASSWORD_RECOVERY handling | — |
+| U2 | Auth modal | New `Auth` UI: log in / create account tabs, Continue with Google, password (show/hide), forgot password, magic-link fallback, error/success states | U1 |
+| U3 | Account menu | Signed-in menu (email, sign out, change password); reset-password "set new password" state | U1, U2 |
+| U4 | Config + verify | Google provider + redirect URLs + email-confirm (user-run, documented); end-to-end verification (build + UI states; user does real login) | U1–U3 |
+
+## Task Breakdown (mid depth)
+**U1** — add the five helpers to the supabase layer; wire an `onAuthStateChange` branch for
+`PASSWORD_RECOVERY`; keep `signInWithOtp`. No UI yet.
+**U2** — `Auth.jsx` modal: tabbed form, Google button, validation (email format, min password
+length hint), forgot-password action, magic-link fallback link, loading + inline errors; open it
+from the account control when signed out.
+**U3** — `Account.jsx` signed-in menu: email/name, Sign out, Change password (updateUser), and the
+recovery "set a new password" flow after a reset link.
+**U4** — write setup steps (dashboard: Google keys, redirect URLs, confirm toggle); verify build +
+every UI state; confirm carry-over (magic-link user → set password → same trips). Real credential
+entry is user-performed.
+
+## Risks & Mitigations
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| OAuth/reset redirect not allow-listed | Med | High | Documented URL list (localhost + Vercel); surfaced like the magic-link fix |
+| Email-confirm blocks first login unexpectedly | Med | Med | Default ON but documented; clear "check your email" state; toggle is one dashboard switch |
+| Existing magic-link user duplicated | Low | High | Same email attaches to same user — verify carry-over in U4 |
+| Password reset UX confusion | Med | Low | Dedicated PASSWORD_RECOVERY "set new password" state in-app |
+| Assistant can't enter credentials | — | — | Build + UI-state verify; user performs real sign-up/login |
+
+## Dependencies
+- Supabase project (existing) + Google OAuth credentials (user creates in Google Cloud + Supabase).
+- Redirect URLs allow-listed (existing localhost/Vercel list + reset/OAuth).
+
+## Open Questions
+- Password strength UI (min length hint) — settle in U2.
+- Reset landing: in-app modal state (recommended) vs. Supabase-hosted page.
+- First-run "create account" nudge vs. keeping auth opt-in (recommend opt-in).
+
+## Decisions Log
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Methods | Email+password + Google primary; magic link backup | User-decided; covers "real login" + "just let me in" | 2026-09-12 |
+| Email confirmation | Keep ON (default) | Verified emails; reset needs email anyway; one dashboard toggle | 2026-09-12 |
+| Providers | Google only for v1 | Highest coverage; Apple/GitHub easy later | 2026-09-12 |
+| BYOK/settings | Stay device-local | Not account data; avoid scope creep | 2026-09-12 |
+| Backend | Reuse Supabase Auth; RLS/sync unchanged | Additive; a session is a session | 2026-09-12 |

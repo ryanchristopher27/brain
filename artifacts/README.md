@@ -8,6 +8,6 @@ Central, version-controlled home for the **markdown artifacts** of every project
 | [micro-habit-companion](micro-habit-companion/INDEX.md) | 0 | 13 | — | 0 |
 | [prediction-market-bot](prediction-market-bot/INDEX.md) | 9 | 0 | yes | 0 |
 | [ryans-boomin-beats](ryans-boomin-beats/INDEX.md) | 5 | 8 | yes | 0 |
-| [trip-planner](trip-planner/INDEX.md) | 4 | 42 | — | 0 |
+| [trip-planner](trip-planner/INDEX.md) | 4 | 52 | — | 0 |
 
 _Regenerate: `python -m dashboard.artifacts_cli sync --all` · push: `/sync`._
