@@ -3,11 +3,11 @@ id: 174081
 source: review:trip-planner:kind-aware-applyops-guard
 title: Kind-aware applyOps guard for proposals
 type: issue
-status: review
+status: done
 assignee: 
 scoped_dir: .
 created: 2026-09-06T20:47:37Z
-updated: 2026-09-06T20:56:58Z
+updated: 2026-09-24T04:11:46Z
 ---
 
 ## Brief
@@ -21,3 +21,4 @@ Suggestion · patch.js · drop PLAN_ONLY/segment-commit/activity-schedule writes
 - 2026-09-06T20:47:37Z · created
 - 2026-09-06T20:56:58Z · status: backlog → doing (iterate)
 - 2026-09-06T20:56:58Z · status: doing → review (fixed + tested)
+- 2026-09-24T04:11:46Z · status: review → done (Cleanup: verified fixed — patch.js drops PLAN_ONLY fields on proposals.)

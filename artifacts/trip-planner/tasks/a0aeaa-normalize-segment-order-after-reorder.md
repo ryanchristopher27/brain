@@ -3,11 +3,11 @@ id: a0aeaa
 source: review:trip-planner:reorder-normalize
 title: Normalize segment order after reorder
 type: issue
-status: review
+status: done
 assignee: 
 scoped_dir: .
 created: 2026-09-05T23:40:33Z
-updated: 2026-09-06T06:15:06Z
+updated: 2026-09-24T04:11:46Z
 ---
 
 ## Brief
@@ -21,3 +21,4 @@ Suggestion · patch.js reorder · segments absent from data.order keep stale ord
 - 2026-09-05T23:40:33Z · created
 - 2026-09-06T06:15:06Z · status: backlog → doing (iterate)
 - 2026-09-06T06:15:06Z · status: doing → review (fixed + regression-tested)
+- 2026-09-24T04:11:46Z · status: review → done (Cleanup: verified fixed — reorder renumbers all segments 0..n-1.)

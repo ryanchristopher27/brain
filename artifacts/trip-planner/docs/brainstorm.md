@@ -743,3 +743,159 @@ email attaches to the same user (trips carry over) — verify.
 Sequence, roughly: **U1 auth flows (password + Google + reset; keep magic link) → U2 auth modal
 (log in / create account / Google / forgot / magic-link fallback) → U3 account menu (sign out,
 change password) → U4 dashboard config + redirect URLs + end-to-end verification.**
+
+---
+
+## 2026-09-19 · Pricing & monetization (public launch)
+
+### Problem / Opportunity
+For a **public** launch, the app fronts real LLM cost for any user who doesn't bring their own
+key. Non-AI features are ~free (local-first), but the AI — proposals, plans, and a high volume of
+background derived-data calls — costs money per use. We need a monetization model that (a) lets
+people try the magic, (b) lets power users bring their own key at zero cost to us, and (c) charges
+sustainably for managed AI, without an unbounded-spend hole. A public server key with no metering
+gets drained in a day.
+
+### Goals
+- Make managed AI a viable paid product with **positive unit economics** and **no uncapped spend**.
+- Keep a **generous free taste** so the funnel stays wide (local-first app is free forever).
+- Preserve **BYOK = free & unlimited** as the power-user pressure-release valve.
+- Support the future **iOS app**, where there's no local `claude -p` escape hatch → managed tier.
+- Reuse what exists: Supabase accounts/JWT, the `api/ai/*` serverless seam, per-record caching.
+
+### Audience
+- **Casual planners** (majority): 1 trip every few months, bursty. Want it to "just work." → managed.
+- **Power/dev users** (desktop): already have a Claude subscription or API key. → BYOK / local CLI, free.
+- **Mobile users**: no CLI, keychain-BYOK is awkward. → funnel to managed (strengthens economics).
+
+### Constraints
+- Usage is **bursty** (plan hard for days, quiet for months) — argues against pure monthly subs.
+- Solo/early operator — payments + tax compliance overhead matters; prefer lower-ops options.
+- One "proposal"/"plan" = **many** LLM calls (reasoning + geocode + weather + match% + transport).
+- Stripe-style fees (~2.9% + 30¢) make tiny purchases uneconomic.
+- BYOK secrets must **not** be custodied server-side (liability) — keep client-side/direct.
+
+### Decided (leaning, via prior session discussion — confirm below)
+- **Three-layer model**: non-AI free forever · BYOK free & unlimited · managed AI metered/paid.
+- **Auth-gate + meter every managed call** through the Supabase JWT + `api/ai/plan.js` seam.
+- **Model split**: cheap model for background calls, premium for reasoning; behind a **gateway**
+  (Vercel AI Gateway / OpenRouter) with **hard spend caps** + caching.
+
+### Ideas & Directions
+
+#### 1 · Metering unit — internal tokens, external "credits"
+Track true cost internally (tokens × model price). Expose a simple abstraction to users: **credits**
+(or "planning actions"). One proposal/plan spends multiple internal calls but should read as a
+predictable, chunky amount to the user. Meter **on success / tokens actually returned** — never
+charge for a failed or unparseable call. Show an estimate before big actions ("~3 credits") for
+trust. Open: fixed "action" pricing (simple, predictable, risks under-charging heavy trips) vs
+true metered credits (fair, but variable and harder to predict).
+
+#### 2 · Tier structure — free allowance → credits (subscription optional)
+- **Free tier**: a monthly managed-AI allowance sized near **one full trip** — enough for the aha,
+  not enough to abuse. Resets monthly.
+- **Credit packs (primary)**: buy N-trips-worth; fits bursty usage (pay when planning). Packs sized
+  above the Stripe-fee floor.
+- **Subscription (secondary/later)**: a "pro/frequent traveler" tier only if demand shows up; don't
+  lead with it. Bursty usage churns monthly subs.
+
+#### 3 · Cost architecture (the supply side)
+- **Shared cross-user cache** (biggest lever): derived data (weather-by-place-month, city coords,
+  briefings) is identical across users → cache keyed on the *query*, not the user. The Nth planner
+  of Paris pays ~nothing for shared facts.
+- **Cheap/smart model split**: route background derived-data to a cheap model; reserve premium for
+  proposals/plans. Keep a **quality floor** — if cheap output is bad (bad coords), fall back.
+- **Gateway with caps**: Vercel AI Gateway (native to our deploy; budgets, caching, failover) or
+  OpenRouter (one key, many models, easy cheap-model routing). Hard monthly spend cap either way.
+
+#### 4 · BYOK handling + desktop-vs-mobile positioning
+- **Keep BYOK client-side** (browser → Anthropic direct, as today). Don't pass keys through our
+  server. Unlimited & free; zero cost to us; power-user valve.
+- **Desktop**: local `claude -p` helper stays a free "power/dev path" (rides their Claude sub).
+  Framed as advanced, not mainstream.
+- **Mobile (iOS)**: no CLI, keychain-BYOK is awkward → mainstream funnel is **managed/paid**. This
+  is the intended economics, not a gap.
+
+#### 5 · Payments & compliance
+- **Stripe direct**: max control, lower %, but we own tax (Stripe Tax helps) and more integration.
+- **Merchant-of-Record (Paddle / Lemon Squeezy)**: they become seller of record and handle global
+  VAT/sales tax — much less ops for a solo global launch, higher %. **Likely the right early call.**
+- Credit packs must clear the fee floor; consider credit **expiry** policy (fairness + rev-rec).
+
+#### 6 · Abuse & enforcement
+- **No sign-in, no managed AI** — every managed call carries the Supabase JWT; server checks
+  balance, decrements, logs tokens. 402 when out.
+- **Per-user + global rate limits** and the gateway spend cap protect against runaway cost.
+- **Free-tier multi-account abuse**: email confirmation is the first gate (have it); plan light
+  device/heuristic checks rather than assuming honesty.
+
+### Recommendations
+1. **Ship the metering ledger first** — a Supabase-backed per-user balance + a usage log, enforced
+   in `api/ai/plan.js`. Everything else (packs, tiers) sits on top. This also finally makes the
+   server key safe to expose publicly.
+2. **Put the serverless call behind a gateway** and add the **cheap/smart model split** +
+   **shared cache** — the supply-side cost work that makes any price sustainable.
+3. **Credits-first pricing** with a one-trip free allowance; subscription deferred.
+4. **Use a Merchant-of-Record** (Paddle/Lemon Squeezy) for v1 payments to skip global tax ops.
+5. **Keep BYOK client-side**; keep desktop CLI as the free power path; mobile → managed.
+
+### Suggested Decisions (confirm in /plan)
+- Metering unit: internal tokens, user-facing **credits** (lean); estimate shown before big actions.
+- Tiers: **free allowance (≈1 trip/mo) + credit packs**; subscription later.
+- Cost stack: **gateway + cheap/smart split + shared cross-user cache**, hard spend cap.
+- Payments: **Merchant-of-Record** for v1 (vs Stripe direct) — confirm.
+- BYOK: **client-side only**, never server-custodied.
+
+### Open Questions (for /plan)
+- Exact credit → action mapping (how many credits is a proposal? a full plan? a background call?).
+- Free-allowance size + reset semantics; do purchased credits expire?
+- Which cheap model for background calls (ties to provider research `348270`).
+- MoR vs Stripe final call (fees vs ops); which MoR supports our regions/pricing shape.
+- Shared-cache design: what's safe to share cross-user (facts yes; anything user-specific no).
+- Quality-floor/fallback rule when the cheap model underperforms.
+
+### Next Steps — what /plan needs
+Rough sequence: **P1 metering ledger (Supabase balance + usage log, enforced in api/ai/plan.js;
+makes the public server key safe) → P2 gateway + cheap/smart model split + shared cross-user cache
+(supply-side cost) → P3 credit packs + Merchant-of-Record checkout → P4 free-tier allowance + rate
+limits + abuse gates → P5 pricing/paywall UX (balance display, pre-action estimates, out-of-credits
+flow) → (later) subscription tier.** Ties to tasks `bc5762` (pricing), `348270` (providers),
+`aeaece` (serverless seam).
+
+### Addendum (same session) — unit economics, metering shape, MCP entrypoint
+
+**Unit economics (grounded in current Anthropic pricing — verify token sizes with `count_tokens`
+during /plan).** Rates: Opus 5 $5/$25, Sonnet 5 $2/$10, Haiku 4.5 $1/$5 per MTok (in/out). Caching:
+reads ≈ 10% of input price, writes ≈ 125% → caching the trip-context prefix cuts input ~90% on
+turns 2+. Per-call estimates: reasoning (proposal/plan/chat edit) ≈ **$0.03 on Sonnet**, ~$0.07 on
+Opus; background (weather/coords/match%/city/transport) ≈ **$0.003 on Haiku**. A full trip (~12
+reasoning + ~34 background calls) ≈ **~$0.45 (Sonnet+Haiku)**, ~$0.90 (Opus reasoning); shared
+cache drives the background portion toward ~$0. **Takeaway: a managed trip costs < $1.** A free
+"1 trip/mo" tier is ~$0.50 CAC; a $5 pack covering ~3–5 trips has healthy gross margin even after
+MoR/Stripe fees. Margins are wide → pricing is about packaging, not survival.
+
+**Metering shape (decided-leaning):** meter the **free tier by COUNT — # prompts + # new
+proposals/plans** (not tokens). Predictable, easy to explain, and it counts exactly the expensive
+reasoning calls. Background derived-data calls are uncounted/absorbed (pennies + shared-cached).
+Internally still log tokens for truth; users see e.g. "3 plans + 50 prompts left." Paid tier draws
+the same countable units from a purchased balance.
+
+**Payments (decided-leaning):** **Merchant-of-Record (Paddle / Lemon Squeezy)** for v1 — handles
+global VAT/sales-tax registration + remittance (the real solo-launch pain), ~5% vs Stripe's
+~2.9%+30¢. Stripe-direct only if wanting control/lower fees + willing to run Stripe Tax and own
+registrations. Lemon Squeezy (Stripe-owned) is a clean on-ramp that can migrate to Stripe later.
+
+**Direction 7 · MCP entrypoint (create trips from any chat client).** Expose the patch-op engine as
+an MCP server (`create_proposal`, `add_segment`, `search_flights`, `apply_ops`) so users build trips
+from Claude Desktop / any MCP client. Fits the AI-first identity; the op protocol is already a clean
+tool API (near 1:1 mapping). Cost angle: reasoning runs in the user's own client on their
+subscription → **near-zero AI cost to us** (BYO-LLM by another name; only storage + flight lookups
+cost). Prereqs: **server-canonical data model** (Supabase as source of truth, not just localStorage)
+and an **OAuth** story mapping the MCP session to a user account. Monetization: likely a paid/Pro
+feature or metered on non-LLM costs; consistent with the BYOK "power users bring their own LLM"
+philosophy. **Scope: later phase** (after core paid tier + server-canonical records). Candidate new
+task.
+
+**Open questions added:** MoR vs Stripe final call (fees vs control); exact free-tier counts (how
+many prompts / plans per month); whether MCP entrypoint warrants server-canonical records sooner
+(it's also useful for the iOS app and cross-device truth).

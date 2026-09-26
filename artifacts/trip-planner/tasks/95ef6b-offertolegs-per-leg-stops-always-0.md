@@ -3,11 +3,11 @@ id: 95ef6b
 source: review:trip-planner:leg-stops-vestigial
 title: offerToLegs per-leg stops always 0
 type: issue
-status: review
+status: done
 assignee: 
 scoped_dir: .
 created: 2026-09-06T23:30:35Z
-updated: 2026-09-06T23:38:01Z
+updated: 2026-09-24T04:11:46Z
 ---
 
 ## Brief
@@ -21,3 +21,4 @@ Suggestion · flights.js · leg-level stops vestigial (real count in normalizeOf
 - 2026-09-06T23:30:35Z · created
 - 2026-09-06T23:38:01Z · status: backlog → doing (iterate)
 - 2026-09-06T23:38:01Z · status: doing → review (fixed + verified)
+- 2026-09-24T04:11:46Z · status: review → done (Cleanup: verified fixed — offerToLegs no longer emits per-leg stops.)

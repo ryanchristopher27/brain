@@ -953,3 +953,208 @@ entry is user-performed.
 | Providers | Google only for v1 | Highest coverage; Apple/GitHub easy later | 2026-09-12 |
 | BYOK/settings | Stay device-local | Not account data; avoid scope creep | 2026-09-12 |
 | Backend | Reuse Supabase Auth; RLS/sync unchanged | Additive; a session is a session | 2026-09-12 |
+
+---
+
+# Plan — Odyssai: Monetization & Pricing (v8 · metered managed AI)
+
+Date: 2026-09-19
+Status: Draft
+Brainstorm: docs/brainstorm.md § 2026-09-19 "Pricing & monetization (public launch)" (+ addendum)
+
+## Overview
+
+Make managed AI a paid, abuse-safe product for a public launch, while keeping the app free to use
+without AI and free for BYOK power users. Builds directly on what exists: Supabase Auth + sync, and
+the `api/ai/plan.js` serverless seam already shipped. The keystone is a **metering ledger** that
+gates the managed serverless endpoint — until that exists, exposing a server-side Anthropic key
+publicly is an unbounded-spend hole, so P1 is both the first revenue primitive and the safety fix.
+
+Three-layer model (from brainstorm): **non-AI features free forever · BYOK free & unlimited (client-
+side, never metered) · managed AI metered/paid.** Unit economics are wide (~<$1/managed trip), so
+this is a packaging problem: meter the countable expensive actions (prompts + new proposals/plans),
+absorb the pennies (background derived-data), and sell credits.
+
+## Goals & Success Criteria
+- **Safe public server key:** no managed AI call runs without an authenticated user with balance.
+- **Metered:** every managed call decrements a per-user balance atomically and is logged.
+- **Free taste:** a monthly allowance (~1 trip) with no payment; resets monthly.
+- **Paid path:** buy credits via a Merchant-of-Record; balance top-up is reflected immediately.
+- **Honest UX:** users see remaining balance, an estimate before big actions, and a clear
+  out-of-credits flow — never a silent failure.
+- **BYOK untouched:** BYOK users bypass metering entirely (client-side direct call).
+
+## Scope
+### In Scope
+- Supabase-backed credit ledger + usage log; atomic consume; JWT-gated enforcement in `api/ai/plan.js`.
+- Cheap/smart model split + gateway + shared cross-user cache (supply-side cost control).
+- Credit packs + Merchant-of-Record checkout + balance top-up webhook.
+- Free-tier monthly grant + rate limits + basic abuse gates.
+- Paywall/pricing UX: balance display, pre-action estimate, out-of-credits flow.
+
+### Out of Scope (this plan)
+- Subscription tier (deferred; credits-first).
+- **MCP entrypoint** (later phase; referenced below — depends on server-canonical data + OAuth).
+- iOS app (separate task; shares the server-canonical-data question).
+- Turning localStorage into the canonical store (only billing state must be server-authoritative now).
+
+## Tech Stack & Architecture
+
+- **Ledger in Supabase (Postgres).** Two tables: a per-user **balance** row and an append-only
+  **usage_events** log. Reuses the existing Supabase project; RLS: users can *read* their own
+  balance/usage, but **only the server (service role) may mutate** — the browser can never grant
+  itself credits.
+- **Atomic consume via a Postgres RPC** (`consume_credits(kind, cost)`): check-and-decrement in one
+  transaction, returns new balance or raises `insufficient`. Prevents double-spend races.
+- **Enforcement at the serverless seam.** `api/ai/plan.js` extracts the Supabase access token
+  (`Authorization: Bearer`), resolves the user (`supabase.auth.getUser(jwt)`), calls `consume_credits`
+  **before** the model call, and logs tokens after. No token / no balance → 401 / 402, and the
+  Anthropic call never fires. **Managed AI now requires sign-in** (a deliberate change from today's
+  anonymous serverless call).
+- **Credits as the single currency, displayed as counts.** Internally: a balance of credits; each
+  action has a configurable credit cost (`prompt`, `new_proposal`, `new_plan`). UI *shows* it as
+  "~N prompts / M plans left." Background derived-data calls are **uncounted** (absorbed; cheap +
+  shared-cached). This unifies free-grant and purchased credits under one ledger.
+- **Supply-side cost (P2):** route background calls to a cheap model (Haiku), reasoning to a
+  premium model, behind a **gateway** (Vercel AI Gateway or OpenRouter) with a hard spend cap;
+  add a **shared cross-user cache** keyed on the query (not the user) for facts (weather-by-place-
+  month, city coords/briefings) so repeated planning of the same place is ~free.
+- **Payments (P3):** **Merchant-of-Record** (Paddle / Lemon Squeezy) — they own global tax. A
+  webhook credits the user's balance on successful purchase. No card data touches us.
+- **BYOK stays client-side.** BYOK requests never hit `api/ai/plan.js`; nothing to meter.
+
+Reasoning for the big calls: **Supabase ledger** (vs a new DB) reuses auth + RLS + the row the user
+already has; **server-only mutation** is the whole security model; **MoR over Stripe** trades ~2pts
+of fees for zero global-tax ops — the right call for a solo public launch (revisit at scale).
+
+## Milestones
+| # | Milestone | Description | Dependencies |
+|---|-----------|-------------|--------------|
+| P1 | Metering ledger + enforcement | Supabase balance + usage log + atomic consume RPC; JWT-gate `api/ai/plan.js`; client sends token; 401/402 flows. Makes the public key safe. | Supabase (exists), `api/ai/plan.js` (exists) |
+| P2 | Supply-side cost stack | Gateway + cheap/smart model split + shared cross-user cache + hard spend cap. | P1 |
+| P3 | Credit packs + MoR checkout | Pack SKUs, MoR checkout, purchase webhook → balance top-up. | P1 |
+| P4 | Free tier + abuse gates | Monthly credit grant + reset; per-user & global rate limits; multi-account abuse mitigations. | P1 |
+| P5 | Paywall / pricing UX | Balance display, pre-action estimate, out-of-credits flow, pack purchase entry points. | P1, P3, P4 |
+
+## Task Breakdown (P1 — mid depth; keystone, next to build)
+
+- **P1.1 — Schema + RLS (Supabase migration).**
+  - `billing_balance`: `user_id (pk, fk auth.users)`, `credits int`, `granted_at`, `updated_at`.
+  - `usage_events`: `id`, `user_id`, `kind` (`prompt`|`new_proposal`|`new_plan`|`background`),
+    `credits_spent int`, `model text`, `input_tokens int`, `output_tokens int`, `cost_usd numeric`,
+    `created_at`. Append-only.
+  - RLS: `select` own rows; **no** client `insert/update/delete` (service role only).
+- **P1.2 — Atomic consume RPC.** `consume_credits(p_kind text, p_cost int)` SECURITY DEFINER:
+  transactionally check `credits >= p_cost`, decrement, return new balance; raise `insufficient`
+  otherwise. (Cost passed by server, not client.)
+- **P1.3 — Server billing helper** (`server/billing.mjs`): a Supabase **service-role** client;
+  `resolveUser(jwt)` → user or throw 401; `consume(userId, kind, cost)` → new balance or 402;
+  `logUsage(userId, {...tokens, model, cost})`. Service-role key from `process.env` (never shipped).
+- **P1.4 — Enforce in `api/ai/plan.js`.** Read `Authorization: Bearer`; resolve user (401 if none);
+  map action `kind` (from request) → configured cost; `consume` (402 if insufficient) **before** the
+  Anthropic call; on success capture `usage` and `logUsage`. Config table of costs in one module.
+  Refund/skip-charge if the model call throws (meter on success).
+- **P1.5 — Client sends the token + action kind.** `src/lib/aiClient.js` `callLocal()` attaches the
+  current Supabase access token and a `kind` for the call; handle 401 ("sign in to use AI") and 402
+  ("out of credits") distinctly. BYOK path unchanged.
+- **P1.6 — Seed + verify.** A way to grant starter credits (manual/SQL for now; P4 automates the
+  monthly grant). End-to-end test: signed-in with balance → works + decrements + logs; zero balance
+  → 402, no Anthropic call; no token → 401; BYOK → unmetered.
+
+**P1 acceptance criteria:**
+- Managed call with valid JWT + balance succeeds; `billing_balance.credits` drops by the action cost;
+  a `usage_events` row is written with token counts.
+- Zero/insufficient balance → HTTP 402, friendly message, **Anthropic never called**.
+- Missing/invalid JWT on a managed call → HTTP 401.
+- Concurrent calls can't overspend (atomic RPC verified).
+- BYOK requests are unaffected (never reach the serverless endpoint).
+
+## Risks & Mitigations
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| Client grants itself credits | Med | High | Service-role-only mutation; RLS blocks client writes; cost set server-side |
+| Double-spend under concurrency | Med | Med | Atomic check-and-decrement RPC (SECURITY DEFINER), not read-modify-write |
+| Server key drained before P1 lands | Med | High | Don't expose managed AI publicly until P1 gates it; keep BYOK/self-key only until then |
+| Charged for failed AI calls | Med | Low | Meter on success; refund/skip on model error |
+| Free-tier multi-account abuse | Med | Med | Email confirmation (exists) + P4 rate limits + soft device heuristics |
+| Credit→action mapping wrong (mis-priced) | Med | Med | Measure real token sizes with `count_tokens`; make costs config, not hardcoded |
+| MoR lock-in / fees at scale | Low | Med | Abstract checkout; Lemon Squeezy → Stripe migration path noted |
+
+## Dependencies
+- Supabase project (exists) — new tables + RPC + `SUPABASE_SERVICE_ROLE_KEY` in Vercel env.
+- `api/ai/plan.js` serverless seam (exists) + `ANTHROPIC_API_KEY` (from v-prior task `aeaece`).
+- P3 needs a Merchant-of-Record account (user-created) + webhook endpoint.
+- P2 needs a gateway account (Vercel AI Gateway / OpenRouter) + spend cap config.
+
+## Open Questions
+- **Exact credit→action mapping** (prompt vs new_proposal vs new_plan costs) — settle after measuring
+  token sizes with `count_tokens` on real prompts.
+- **Free-tier size** (credits/month; "≈1 trip" = how many prompts + plans) — product call.
+- **MoR final pick** (Paddle vs Lemon Squeezy) vs Stripe-direct — confirm before P3.
+- **Server-canonical data** — MCP entrypoint + iOS both want Supabase as source of truth; only
+  *billing* state must be server-authoritative for this plan, but flag whether to pull records
+  server-canonical sooner (would reshape P-later + those features).
+
+## Decisions Log
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Metering model | Credits (single currency), displayed as counts | Unifies free grant + purchases; flexible costs | 2026-09-19 |
+| Free-tier unit | Count prompts + new proposals/plans | Predictable, counts the expensive calls | 2026-09-19 |
+| Enforcement point | JWT-gated `api/ai/plan.js` + service-role mutation | Reuses auth; only server can grant/spend | 2026-09-19 |
+| Managed AI requires sign-in | Yes (change from anon serverless) | Can't meter an anonymous caller | 2026-09-19 |
+| Payments | Merchant-of-Record for v1 (vs Stripe) | Zero global-tax ops for solo launch | 2026-09-19 |
+| Pricing shape | Credits-first; subscription later | Bursty usage; avoid churn | 2026-09-19 |
+| BYOK | Client-side, never metered | No secret custody; power-user valve | 2026-09-19 |
+| MCP entrypoint | Out of scope (later phase) | Needs server-canonical data + OAuth | 2026-09-19 |
+
+---
+
+## Rebrand — Odyssai → Trip Fairy
+Date: 2026-09-22
+
+| Decision | Choice | Reasoning | Date |
+|---|---|---|---|
+| Product name | **Trip Fairy** (wordmark `trip fAIry`, "AI" in accent) | Play on words that puts the AI in the name; replaces Odyssai | 2026-09-22 |
+| Palette | Sky: accent `#38bdf8` on slate grounds (`#0b0f14` / `#141a22` / `#1c242e`) | Supplied with the logo; replaces Nocturne's blurple `#9184d9` | 2026-09-22 |
+| Logo | Continuous dashed flight path → paper plane (`public/brand/`, `src/components/Brand.jsx`) | The mark takes `currentColor`, so it follows the accent token | 2026-09-22 |
+
+Earlier sections keep the Odyssai name as a historical record.
+
+## Map redesign — MapLibre + OpenFreeMap
+Date: 2026-09-22
+
+| Decision | Choice | Reasoning | Date |
+|---|---|---|---|
+| Map engine | MapLibre GL (lazy-loaded chunk) replaces Leaflet | Vector tiles let the basemap be styled with Trip Fairy's own tokens (vs. CSS-inverting OSM raster tiles); globe projection; the engine stays out of the main bundle | 2026-09-22 |
+| Basemap tiles | OpenFreeMap (`tiles.openfreemap.org`), custom style in `src/lib/mapStyle.js` | Free incl. commercial, no key, no request limits; attribution required (compact "i" control). CARTO Dark Matter now needs a key and its free tier targets non-commercial use | 2026-09-22 |
+| Symbols | Numbered stop pins · home plane badge · POI icons (ticket / bed-square / fork, food in warm tone) · great-circle legs dashed per mode with midpoint mode badges | Each marker says what it is at a glance; labels avoid collisions; popups built as text (closes an HTML-injection path from AI blurbs) | 2026-09-22 |
+
+Risk: OpenFreeMap is donation-funded community infrastructure. The style points at one tile URL, so switching providers (self-hosted OpenFreeMap, MapTiler, Stadia) means editing one file.
+
+## Pricing — outcome-based reasoning charges
+Date: 2026-09-25
+
+| Decision | Choice | Reasoning | Date |
+|---|---|---|---|
+| How to price "build" turns | **Outcome-based, server-side**: every reasoning turn costs 1 up front; after the reply, `server/outcome.mjs` counts what it added (≥4 activities → new_plan 5; ≥2 stops → new_proposal 3) and charges the difference; drains to 0 if the balance can't cover it | Pricing by the trip's emptiness at send time charged 5 for *every* message on an empty plan (even "change the dates") and let the client pick its own rate. The server now prices only from its own read of the model output. | 2026-09-25 |
+| Background (free) calls | Size cap + per-user daily cap (`BACKGROUND_MAX_PROMPT_CHARS`, `BACKGROUND_MAX_PER_DAY`), no migration | The client chooses `kind`; relabeling reasoning as background would otherwise be free cheap-model completions | 2026-09-25 |
+
+## City page — "Getting around" (R6.1)
+Date: 2026-09-25
+
+| Decision | Choice | Reasoning | Date |
+|---|---|---|---|
+| Source of truth | Model-generated, but grounded in Wikivoyage's "Get in" / "Get around" wikitext when a page resolves (`src/lib/wikivoyage.js`), with visible CC BY-SA attribution | Free, no key, and materially reduces the model's tendency to invent fares/passes vs. asking it cold | 2026-09-25 |
+| Caching | localStorage, ~30-day TTL, cache misses too (`tf.wikivoyage.v1.<placeKey>`) | Matches the existing geocode cache pattern; the "Get around" facts change slowly | 2026-09-25 |
+| Data shape | `segment.detail.gettingAround = { summary, modes[], pass, apps[], airport[] }` | Additive to the existing `detail` cache — doesn't bump `detail.v` (still 2) so it can be backfilled onto older briefings via `deriveGettingAround()` without a full re-derive | 2026-09-25 |
+
+## Trip-level "Good to know" cautions
+Date: 2026-09-25
+
+| Decision | Choice | Reasoning | Date |
+|---|---|---|---|
+| Real-data facts | Public holidays (Nager.Date, free, no CORS issue) + US State Dept advisories via a new `api/advisories.js` proxy (upstream has no CORS) | Zero-cost, zero-AI facts a traveler actually wants; only ever shown at advisory level ≥2 | 2026-09-25 |
+| Country codes | `Intl.DisplayNames` region table (built once, name→ISO2) + a small alias list (USA, UK, Czechia, Türkiye, South Korea…) | Segments store `country` as free text; no existing geocoder field gives ISO2 cheaply | 2026-09-25 |
+| AI notes generation | User-initiated button (`lib/cautions.js` via a new `askPrompt` in `lib/aiClient.js`, kind `'prompt'`), not automatic | Costs a credit on managed AI under the outcome-based pricing model — must not fire on every trip view | 2026-09-25 |
+| Staleness | `record.cautions = { items, sig, at }`; sig fingerprints ordered stops + dates + home | Keep showing old notes with a quiet "trip changed — Refresh" nudge rather than silently going stale or auto-spending a credit | 2026-09-25 |
+| Persistence | `onRevise` (the same undoable "latest record" path `TripAudit`'s one-click fixes use) | Generation is async and user-initiated, same shape as an audit fix — not a manual field edit (`onChange`) or a silent cache fill (`onPatch`) | 2026-09-25 |

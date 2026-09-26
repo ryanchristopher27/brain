@@ -3,11 +3,11 @@ id: bc5762
 source: web:trip-planner:pricing-models
 title: Evaluate pricing models
 type: research
-status: backlog
+status: done
 assignee: 
 scoped_dir: .
 created: 2026-09-20T00:02:23Z
-updated: 2026-09-20T00:02:23Z
+updated: 2026-09-24T04:11:47Z
 ---
 
 ## Brief
@@ -19,3 +19,6 @@ Research a pricing model that fits: subscription vs usage-based vs freemium vs B
 
 ## Updates
 - 2026-09-20T00:02:23Z · created
+- 2026-09-24T04:11:47Z · status: backlog → doing
+- 2026-09-24T04:11:47Z · status: doing → review
+- 2026-09-24T04:11:47Z · status: review → done (Cleanup: superseded — pricing decided in docs/plan.md 'Monetization v8' (credits-first, BYOK free, MoR checkout).)

@@ -3,11 +3,11 @@ id: 03c4a1
 source: review:trip-planner:proposal-timeline-readonly
 title: Proposal timeline should be read-only (no drag-to-day)
 type: issue
-status: review
+status: done
 assignee: 
 scoped_dir: .
 created: 2026-09-06T20:47:37Z
-updated: 2026-09-06T20:56:58Z
+updated: 2026-09-24T04:11:46Z
 ---
 
 ## Brief
@@ -21,3 +21,4 @@ Suggestion · Timeline/ProposalView · proposal DnD sets activity.day which the 
 - 2026-09-06T20:47:37Z · created
 - 2026-09-06T20:56:58Z · status: backlog → doing (iterate)
 - 2026-09-06T20:56:58Z · status: doing → review (fixed + tested)
+- 2026-09-24T04:11:46Z · status: review → done (Cleanup: obsolete — the Timeline component (and drag-to-day) no longer exists.)

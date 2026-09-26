@@ -7,7 +7,7 @@ status: backlog
 assignee: 
 scoped_dir: .
 created: 2026-09-20T00:02:23Z
-updated: 2026-09-20T00:02:23Z
+updated: 2026-09-24T04:12:02Z
 ---
 
 ## Brief
@@ -19,3 +19,4 @@ Add flight UI + LLM planning context that optimizes a trip around real flights: 
 
 ## Updates
 - 2026-09-20T00:02:23Z · created
+- 2026-09-24T04:12:02Z · comment: Unblocked: the departure airport is now on trip.startLocation.iata (settings.home default). Date finder + Flights page already prefill from it.
