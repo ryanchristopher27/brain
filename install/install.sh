@@ -138,6 +138,20 @@ install_claude_code() {
     done
   fi
 
+  # Agent CLI tools with their own skills (installed into ~/.claude/skills by the
+  # tool itself). Playwright CLI: token-efficient browser automation for coding
+  # agents — install it with `npm install -g @playwright/cli@latest` (needs a
+  # recent Node; `--prefix ~/.local` if the global prefix isn't writable).
+  if command -v playwright-cli > /dev/null 2>&1; then
+    if playwright-cli --version > /dev/null 2>&1; then
+      playwright-cli install --skills -g > /dev/null 2>&1 \
+        && info "  Skills: playwright-cli → ~/.claude/skills" \
+        || warn "  playwright-cli skill install failed — run: playwright-cli install --skills -g"
+    else
+      warn "  playwright-cli is installed but won't run (Node too old?) — skipping its skill"
+    fi
+  fi
+
   # Merge settings.json (hooks + MCPs)
   local BRAIN_SETTINGS="$BRAIN_DIR/.claude/settings.json"
   local CC_SETTINGS="$HOME/.claude/settings.json"

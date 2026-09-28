@@ -3,10 +3,11 @@
 ## What This Domain Covers
 
 Frontend design and implementation quality — visual design, UX, accessibility, and the
-craft of shipping production-grade interfaces. It consolidates two external design suites
+craft of shipping production-grade interfaces. It consolidates external design sources
 into one brain-native domain: **impeccable** (an opinionated design spine — rules, design
 verbs, and a deterministic anti-pattern detector) backed by **ui-ux-pro-max** (a queryable
-knowledge base of color palettes, font pairings, UI styles, UX guidelines, and chart types).
+knowledge base of color palettes, font pairings, UI styles, UX guidelines, and chart types), plus **Vercel's Web Interface Guidelines** (a 100+ rule checklist the
+`audit` subcommand runs files against).
 
 Activates on projects that render a UI: websites, landing pages, dashboards, web apps,
 component libraries, and design systems across React, Next.js, Vue, Svelte, Astro, and
@@ -40,7 +41,7 @@ domains/frontend/
 ├── NOTICE             Attribution for the consolidated sources
 ├── commands/
 │   └── design.md      The /design command (verb + subcommands)
-├── references/        Deep-dive guidance (typography, color, motion, …)
+├── references/        Deep-dive guidance (typography, color, motion, …) + web-interface-guidelines.md
 ├── data/              ui-ux-pro-max CSV knowledge base
 └── scripts/           Search engine (Python) + anti-pattern detector (Node)
 ```
@@ -54,6 +55,7 @@ pure-markdown guidance when a runtime is absent:
 
 ## Attribution
 
-This domain vendors curated subsets of two upstream projects. See `NOTICE`.
+This domain vendors curated subsets of three upstream projects. See `NOTICE`.
 - ui-ux-pro-max-skill — MIT — https://github.com/nextlevelbuilder/ui-ux-pro-max-skill
 - impeccable — Apache 2.0 — https://github.com/pbakaus/impeccable
+- web-interface-guidelines — MIT — https://github.com/vercel-labs/web-interface-guidelines

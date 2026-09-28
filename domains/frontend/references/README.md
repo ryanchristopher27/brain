@@ -21,3 +21,4 @@ acting; `rules.md` stays scannable and links here for detail.
 | `ux-writing.md` | Button/link labels, errors, em-dash & buzzword bans | `data/ux-guidelines.csv` |
 | `register.md` | Brand-vs-product register (read on every invocation) | `data/products.csv`, `data/styles.csv`, `data/ui-reasoning.csv` |
 | `charts.md` | Chart-type selection by data shape | `data/charts.csv` |
+| `web-interface-guidelines.md` | Vercel's 100+ rule checklist — a11y, focus, forms, animation, typography, images, performance, navigation, touch, dark mode, i18n (vendored, MIT) | — (read by `audit`) |

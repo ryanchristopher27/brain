@@ -25,6 +25,29 @@ Always-on baseline behavior across all projects and sessions. These are defaults
 - Don't add error handling for scenarios that can't happen
 - If something adjacent would clearly help, mention it — don't build it without confirmation
 
+## Minimal Code — the Ladder
+
+Before writing code, read the task and the code it touches and trace the real flow end to end.
+Then stop at the first rung that holds:
+
+1. Does this need to be built at all? (YAGNI)
+2. Does it already exist in this codebase? Reuse the helper, util, or pattern already here.
+3. Does the standard library do it? 4. A native platform feature? 5. An installed dependency?
+6. Can it be one line? 7. Only then: the minimum code that works.
+
+- Bug fix = root cause: grep every caller of the function you touch and fix the shared function
+  once, rather than patching only the path the report names.
+- Deletion over addition, boring over clever, fewest files. The shortest diff wins only once you
+  understand the problem — a small change in the wrong place is a second bug.
+- Question complex requests: "Do you actually need X, or does Y cover it?"
+- Mark a deliberate simplification with a known ceiling (O(n²) scan, naive heuristic) with a
+  comment naming the ceiling and the upgrade path.
+- Never minimal about: understanding the problem, validation at trust boundaries, error handling
+  that prevents data loss, security, accessibility, or anything explicitly requested. Non-trivial
+  logic leaves one small runnable check behind.
+
+_Adapted from [ponytail](https://github.com/DietrichGebert/ponytail) (MIT, © 2026 DietrichGebert)._
+
 ## Decision Making
 
 - For significant decisions: recommend with reasoning, surface alternatives considered, let the user confirm

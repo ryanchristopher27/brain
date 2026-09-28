@@ -107,8 +107,11 @@ Technical quality scan — diagnose, don't fix (hand fixes to `polish`/`craft`).
 2. **Scan five axes:** Accessibility (contrast, focus, keyboard, alt, headings), Performance (CLS,
    lazy-load, animated props), Theming (token consistency, raw hex), Responsive (breakpoints,
    overflow), Anti-Patterns (the detector hits + the absolute bans).
-3. **Report:** a short health summary, then findings grouped by severity (each citing the rule id /
-   detector id), systemic patterns, and positives. End with recommended next actions.
+3. **Checklist pass:** read `$FE/references/web-interface-guidelines.md` and check the files against
+   every rule section (forms, focus, touch, dark mode, i18n… — the detector doesn't cover these).
+   Cite hits as `wig:<section>` with `file:line`.
+4. **Report:** a short health summary, then findings grouped by severity (each citing the rule id /
+   detector id / `wig:` section), systemic patterns, and positives. End with recommended next actions.
 
 ### polish
 Final systematic pass — apply fixes.

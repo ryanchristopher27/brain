@@ -1,7 +1,7 @@
 Brain — Frontend Domain
 =======================
 
-This domain consolidates curated subsets of two upstream open-source projects. Their original
+This domain consolidates curated subsets of three upstream open-source projects. Their original
 licenses apply to the vendored material and are preserved here.
 
 -----------------------------------------------------------------------
@@ -24,6 +24,14 @@ licenses apply to the vendored material and are preserved here.
    Distilled guidance derived from its skill, 7 domain references, and
    command vocabulary appears in rules.md, references/, and commands/design.md.
 -----------------------------------------------------------------------
+3. web-interface-guidelines
+   Author:  Vercel Labs
+   License: MIT
+   Source:  https://github.com/vercel-labs/web-interface-guidelines
 
-Full upstream LICENSE texts accompany the vendored files where required. When updating either
+   Vendored: the rules checklist (command.md) as
+   references/web-interface-guidelines.md, used by /design audit.
+-----------------------------------------------------------------------
+
+Full upstream LICENSE texts accompany the vendored files where required. When updating any
 upstream source, refresh this NOTICE and the corresponding vendored material together.

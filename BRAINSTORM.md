@@ -51,6 +51,13 @@ Consolidated two external frontend-design suites into `domains/frontend/` — th
 - **Key decisions:** impeccable spine wins conflicts, ui-ux-pro-max backs with concrete data; curated command set (remaining verbs folded into `rules.md` as named techniques); skipped both repos' CLI / browser extension / website / live-loop. `/design` resolves the brain script path at runtime via the symlinked command file.
 - **Pattern this establishes:** distill external skills into the brain-native domain shape (rules + references + detect + cursor-rule), keep heavy tooling dependency-light and degrade-gracefully, vendor with attribution.
 
+### External resource intake (2026-09-27)
+Reviewed 13 community resources; adopted 3 (the rest duplicate existing domains, need a shadcn/TS stack, or aren't dev tooling — see the Trip Fairy session notes).
+- **Web Interface Guidelines** (Vercel Labs, MIT) → vendored as `domains/frontend/references/web-interface-guidelines.md`; `/design audit` now runs files against it (`wig:<section>`). Vendored rather than the upstream skill's fetch-on-every-review, per the pattern above.
+- **Ponytail** (MIT) → its "decision ladder" distilled into `universal/rules.md` + `.cursor/rules/universal.mdc` ("Minimal Code — the Ladder"). Skipped its plugin/hooks/commands.
+- **Playwright CLI** (Microsoft) → `install.sh` installs its skill into `~/.claude/skills` when a working `playwright-cli` is on PATH. Installed to `~/.local` (global npm prefix is root-owned); needs Node ≥ 18.18 — this machine's Node 18.17 can't run it yet.
+- **Gap found:** `universal/rules.md` only reaches Cursor (via `universal.mdc`); nothing loads it into Claude Code globally (no `~/.claude/CLAUDE.md`).
+
 ---
 
 ## Directory Structure (Planned)
