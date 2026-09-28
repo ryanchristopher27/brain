@@ -138,6 +138,22 @@ install_claude_code() {
     done
   fi
 
+  # Universal rules → every Claude Code session. A marked block in
+  # ~/.claude/CLAUDE.md imports universal/rules.md (Claude Code resolves @path
+  # imports), so edits to the rules apply without re-running this script. Any
+  # other content in that file is the user's and is left alone.
+  local CC_MEMORY="$HOME/.claude/CLAUDE.md"
+  local BEGIN_MARK="<!-- brain:universal-rules (managed by brain/install/install.sh) -->"
+  local END_MARK="<!-- /brain:universal-rules -->"
+  touch "$CC_MEMORY"
+  if grep -qF "$BEGIN_MARK" "$CC_MEMORY"; then
+    info "  Already current: universal rules import in ~/.claude/CLAUDE.md"
+  else
+    [ -s "$CC_MEMORY" ] && backup_file "$CC_MEMORY"
+    { [ -s "$CC_MEMORY" ] && echo ""; echo "$BEGIN_MARK"; echo "@$BRAIN_DIR/universal/rules.md"; echo "$END_MARK"; } >> "$CC_MEMORY"
+    info "  Linked: universal rules → ~/.claude/CLAUDE.md"
+  fi
+
   # Agent CLI tools with their own skills (installed into ~/.claude/skills by the
   # tool itself). Playwright CLI: token-efficient browser automation for coding
   # agents — install it with `npm install -g @playwright/cli@latest` (needs a
@@ -237,6 +253,12 @@ install_cursor() {
 # ── Uninstall ─────────────────────────────────────────────────────────────────
 uninstall() {
   info "Uninstalling brain resources..."
+
+  # Remove the universal-rules import block from ~/.claude/CLAUDE.md (keep the rest)
+  if [ -f "$HOME/.claude/CLAUDE.md" ] && grep -qF "<!-- brain:universal-rules" "$HOME/.claude/CLAUDE.md"; then
+    sed -i.bak '/<!-- brain:universal-rules/,/<!-- \/brain:universal-rules -->/d' "$HOME/.claude/CLAUDE.md" \
+      && rm -f "$HOME/.claude/CLAUDE.md.bak" && info "  Removed: universal rules import (~/.claude/CLAUDE.md)"
+  fi
 
   # Remove Claude Code commands (workflow + domain)
   for cmd_file in "$BRAIN_DIR/.claude/commands"/*.md; do

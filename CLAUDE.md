@@ -18,7 +18,7 @@ Brain is a modular LLM resource suite — a vault of workflow skills, rules, hoo
 | `.cursor/rules/` | Cursor rule files, auto-loaded when brain/ is open |
 | `workflow/*/spec.md` | Design docs for each workflow phase — not operative |
 | `workflow/_phases.md` | How phases connect and when to transition |
-| `universal/rules.md` | Source content for always-on behavior rules |
+| `universal/rules.md` | Always-on behavior rules — imported into every Claude Code session via `~/.claude/CLAUDE.md` (managed block) and mirrored for Cursor in `.cursor/rules/universal.mdc` |
 | `universal/hooks/` | Hook infrastructure — examples and active scripts |
 | `domains/` | Domain-specific rules (ml, frontend, research, systems) |
 | `install/install.sh` | Wires brain globally into Claude Code and Cursor |

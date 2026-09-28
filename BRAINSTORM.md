@@ -55,8 +55,8 @@ Consolidated two external frontend-design suites into `domains/frontend/` — th
 Reviewed 13 community resources; adopted 3 (the rest duplicate existing domains, need a shadcn/TS stack, or aren't dev tooling — see the Trip Fairy session notes).
 - **Web Interface Guidelines** (Vercel Labs, MIT) → vendored as `domains/frontend/references/web-interface-guidelines.md`; `/design audit` now runs files against it (`wig:<section>`). Vendored rather than the upstream skill's fetch-on-every-review, per the pattern above.
 - **Ponytail** (MIT) → its "decision ladder" distilled into `universal/rules.md` + `.cursor/rules/universal.mdc` ("Minimal Code — the Ladder"). Skipped its plugin/hooks/commands.
-- **Playwright CLI** (Microsoft) → `install.sh` installs its skill into `~/.claude/skills` when a working `playwright-cli` is on PATH. Installed to `~/.local` (global npm prefix is root-owned); needs Node ≥ 18.18 — this machine's Node 18.17 can't run it yet.
-- **Gap found:** `universal/rules.md` only reaches Cursor (via `universal.mdc`); nothing loads it into Claude Code globally (no `~/.claude/CLAUDE.md`).
+- **Playwright CLI** (Microsoft) → `install.sh` installs its skill into `~/.claude/skills` when a working `playwright-cli` is on PATH. Installed to `~/.local` (global npm prefix is root-owned). Needed Node ≥ 18.18, so the machine moved to **Node 22 LTS via fnm** (`~/.zshrc` loads `fnm env --use-on-cd`; projects pin with `.node-version`).
+- **Gap fixed:** `universal/rules.md` used to reach only Cursor (via `universal.mdc`). `install.sh` now keeps a marked import block in `~/.claude/CLAUDE.md` (`@…/universal/rules.md`), so every Claude Code session loads the universal rules; uninstall removes just the block. Verified with a fresh `claude -p`.
 
 ---
 
