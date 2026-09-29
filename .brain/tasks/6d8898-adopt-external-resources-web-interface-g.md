@@ -3,11 +3,11 @@ id: 6d8898
 source: adhoc:brain:resource-intake-0927
 title: "Adopt external resources: Web Interface Guidelines, minimal-code ladder, Playwright CLI"
 type: task
-status: review
+status: done
 assignee: 
 scoped_dir: .
 created: 2026-09-28T03:12:32Z
-updated: 2026-09-28T03:12:32Z
+updated: 2026-09-29T02:52:47Z
 ---
 
 ## Brief
@@ -21,3 +21,4 @@ Reviewed 13 community resources; adopted 3. Vercel Web Interface Guidelines vend
 - 2026-09-28T03:12:32Z · created
 - 2026-09-28T03:12:32Z · status: backlog → doing
 - 2026-09-28T03:12:32Z · status: doing → review
+- 2026-09-29T02:52:47Z · status: review → done (closed at Ryan's request in chat 2026-09-28)
