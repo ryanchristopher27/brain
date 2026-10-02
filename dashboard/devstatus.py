@@ -84,7 +84,7 @@ def tracker_status(root: Path) -> dict:
 
 
 # ── Vercel ───────────────────────────────────────────────────────────────────
-VERCEL_TOKEN_SETUP = "Create a read-only token at https://vercel.com/account/tokens and set VERCEL_TOKEN (env var) or add it to ~/.claude/brain-dashboard/secrets.json"
+VERCEL_TOKEN_SETUP = "Create a token at https://vercel.com/account/tokens (Vercel tokens aren't read-only: scope it to your team and give it an expiry) and set VERCEL_TOKEN (env var) or add it to ~/.claude/brain-dashboard/secrets.json"
 
 
 async def vercel_status(project_slug: str, team_id: str | None = None) -> dict:
@@ -119,7 +119,7 @@ async def vercel_status(project_slug: str, team_id: str | None = None) -> dict:
 
 
 # ── Supabase ─────────────────────────────────────────────────────────────────
-SUPABASE_TOKEN_SETUP = "Create an access token at https://supabase.com/dashboard/account/tokens and set SUPABASE_ACCESS_TOKEN (env var) or add it to ~/.claude/brain-dashboard/secrets.json"
+SUPABASE_TOKEN_SETUP = "Create an access token at https://supabase.com/dashboard/account/tokens (it has full access to your Supabase account — keep it local, give it an expiry) and set SUPABASE_ACCESS_TOKEN (env var) or add it to ~/.claude/brain-dashboard/secrets.json"
 
 
 async def supabase_status(project_ref: str) -> dict:
