@@ -105,11 +105,13 @@ source) and proposes — always review before trusting it.
 - **Git** — branch, last commits, uncommitted count, ahead/behind upstream. No network.
 - **Tracker** — task counts by status + what's in review. Reuses `dashboard/tracker.py`.
 - **Hosting (Vercel)** — latest production deployment, via the Vercel REST API. Needs a
-  read-only token: create one at https://vercel.com/account/tokens, then set `VERCEL_TOKEN`
+  token (Vercel tokens aren't read-only — scope it to your team and give it an expiry):
+  create one at https://vercel.com/account/tokens, then set `VERCEL_TOKEN`
   (env var) or add it to `~/.claude/brain-dashboard/secrets.json` (flat JSON, mode 600).
-- **Database (Supabase)** — project status/region via the Management API. Needs a token:
-  https://supabase.com/dashboard/account/tokens → `SUPABASE_ACCESS_TOKEN` (same two
-  places).
+- **Database (Supabase)** — project status/region via the Management API. Needs a personal
+  access token — it has full access to your Supabase account, so keep it local and give it
+  an expiry: https://supabase.com/dashboard/account/tokens → `SUPABASE_ACCESS_TOKEN` (same
+  two places).
 - **Uptime** — an unauthenticated GET against the project's declared production URL.
 - Remote calls (Vercel/Supabase/uptime) are cached 120s in-process. No token is ever
   logged or returned in an API response; `dashboard/secrets_store.py` only reads tokens,

@@ -197,7 +197,7 @@ built against Trip Fairy. Design decisions:
   human review; it never writes without `--out`.
 - **Status collectors** (`dashboard/devstatus.py`): git (branch/commits/uncommitted/
   ahead-behind, no network), tracker (reuses `dashboard/tracker.py`), Vercel deployments
-  and Supabase project health (both need a read-only token — env var or
+  and Supabase project health (both need a personal token — neither is read-only, so scope/expire them; env var or
   `~/.claude/brain-dashboard/secrets.json`, mode 600 — and fail soft to a "not configured"
   shape naming the exact env var and a link to create the token), and an unauthenticated
   uptime GET against the project's declared production URL. Remote results are cached
