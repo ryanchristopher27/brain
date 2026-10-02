@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import data, projects as projects_mod, registry, tracker
+from . import data, devstatus, projects as projects_mod, registry, resources as resources_mod, tracker
 from .process_manager import ProcessManager, SpawnError
 from .voice_bridge import VoiceBridge
 
@@ -242,6 +242,44 @@ async def set_project_status(name: str, req: ProjectStatus):
     except projects_mod.ProjectError as err:
         return JSONResponse({"error": str(err)}, status_code=400)
     return JSONResponse(e)
+
+
+@app.get("/api/devdash/{name}")
+async def devdash(name: str):
+    """Aggregated per-project dev dashboard: resources + best-effort status (git, tracker,
+    hosting, database, uptime). Every remote source fails soft to a 'not configured'
+    shape rather than erroring — see dashboard/devstatus.py."""
+    root = _project_root(name)
+    if root is None:
+        return JSONResponse({"error": "unknown project"}, status_code=404)
+
+    res = resources_mod.load(root, name)
+    hosting = next((r for r in res["resources"]
+                    if r["status_check"].get("type") == "vercel"), None)
+    db = next((r for r in res["resources"]
+               if r["status_check"].get("type") == "supabase"), None)
+
+    vercel_cfg = (hosting or {}).get("status_check", {}).get("config", {}) if hosting else {}
+    db_cfg = (db or {}).get("status_check", {}).get("config", {}) if db else {}
+    prod_url = vercel_cfg.get("prod_url")
+    project_ref = db_cfg.get("project_ref")
+
+    vercel = (await devstatus.vercel_status(vercel_cfg.get("vercel_project", name))
+              if hosting else {"configured": False, "reason": "no resource with a vercel status_check"})
+    supabase = (await devstatus.supabase_status(project_ref) if project_ref
+                else {"configured": False, "reason": "no resource with a supabase project_ref"})
+    uptime = (await devstatus.uptime_check(prod_url) if prod_url
+              else {"configured": False, "reason": "no production URL configured (status_check.config.prod_url)"})
+
+    return JSONResponse({
+        "project": name,
+        "resources": res,
+        "git": devstatus.git_status(root),
+        "tracker": devstatus.tracker_status(root),
+        "vercel": vercel,
+        "supabase": supabase,
+        "uptime": uptime,
+    })
 
 
 @app.get("/api/tasks")

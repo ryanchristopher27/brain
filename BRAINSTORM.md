@@ -177,3 +177,39 @@ ships two runtime modules. Full plan + decisions in `docs/plan.md` (versioned se
   keep it self-contained and one `install.sh` away, but don't treat its deps as brain's.
   Also: "add a resource type" is a checklist — dir + template + install-sync + hook +
   CLAUDE.md doc (install-sync for `agents/` is milestone A1, still pending).
+
+---
+
+## Per-project dev dashboard (2026-10-02, tracker 8033e3)
+One view per major project ("how is the app doing / where are its resources") — first
+built against Trip Fairy. Design decisions:
+
+- **Resources schema**: `<project>/.brain/resources.json` (stdlib JSON — no YAML lib is
+  installed in `voice/.venv`, so JSON over YAML to stay dependency-free). One entry per
+  external service: `name, category, urls{console,docs}, purpose, plan, env_vars[]
+  (names only, never values), status_check{type,config}, verified, notes`. Categories:
+  hosting · database · auth · payments · data-api · assets · analytics · monitoring ·
+  source · package-registry · bot-protection · ai · other. `dashboard/resources.py` loads
+  a project's own file first, else falls back to a brain-side seed at
+  `dashboard/seed/<project>.resources.json` — lets a project be documented here before it
+  adopts the file itself. `dashboard/resources_cli.py seed` scans a project (package.json
+  deps, `.env*` names, `vercel.json`, known hostnames in source) and proposes entries for
+  human review; it never writes without `--out`.
+- **Status collectors** (`dashboard/devstatus.py`): git (branch/commits/uncommitted/
+  ahead-behind, no network), tracker (reuses `dashboard/tracker.py`), Vercel deployments
+  and Supabase project health (both need a personal token — neither is read-only, so scope/expire them; env var or
+  `~/.claude/brain-dashboard/secrets.json`, mode 600 — and fail soft to a "not configured"
+  shape naming the exact env var and a link to create the token), and an unauthenticated
+  uptime GET against the project's declared production URL. Remote results are cached
+  120s in-process so repeat page loads don't hammer external APIs. No token ever appears
+  in a response; `secrets_store.py` is read-only (never creates a token).
+- **No Vercel Web Analytics integration** — the free REST API doesn't expose visitor
+  counts; the Traffic card says so honestly rather than faking a metric. Revisit if a
+  paid Analytics API token is ever added.
+- **UI**: standalone `web/devdash.html`/`.js`/`.css` (not part of the `hub.js` SPA
+  router, to avoid touching it while the user had uncommitted edits there) — project
+  picker, header (status + prod URL + uptime), Hosting/Traffic/Database/Repo/Tracker
+  cards, and a Resources table grouped by category. One link added from `index.html`'s
+  header into it. Reuses `style.css`'s existing tokens/cards/pills rather than a second
+  design system. Responsive down to narrow widths (cards stack, table rows become
+  label/value pairs).

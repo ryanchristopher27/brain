@@ -1,0 +1,188 @@
+{
+  "project": "trip-planner",
+  "_note": "Seeded by brain's dev dashboard (task 8033e3) by reading the trip-planner repo (README, docs/plan.md, server/*.mjs, api/, src/lib/*.js, package.json, .env.example files — names only). Not committed into trip-planner itself; move this file to trip-planner/.brain/resources.json when convenient so it becomes the project's own source of truth.",
+  "resources": [
+    {
+      "name": "Vercel",
+      "category": "hosting",
+      "urls": {
+        "console": "https://vercel.com/dashboard",
+        "docs": "https://vercel.com/docs"
+      },
+      "purpose": "Production hosting + deploys for the web app and serverless API routes (api/*). Production domain mytripfairy.com, plus the default <app>.vercel.app URL.",
+      "plan": "unverified — check the Vercel dashboard for current plan/limits",
+      "env_vars": [],
+      "status_check": { "type": "vercel", "config": { "prod_url": "https://mytripfairy.com" } },
+      "verified": true,
+      "notes": "vercel.json defines API rewrites (/ai, /flights, /advisories, /climate → api/*). README references the Vercel URL for Turnstile domain allowlisting."
+    },
+    {
+      "name": "Supabase",
+      "category": "database",
+      "urls": {
+        "console": "https://supabase.com/dashboard/project/mwxalstbjecrdolmrvrt",
+        "docs": "https://supabase.com/docs"
+      },
+      "purpose": "Postgres database, auth, and cross-device sync. Server-side billing/metering (server/billing.mjs) calls SECURITY DEFINER RPCs with the service-role key; browser uses the anon key.",
+      "plan": "unverified — check the Supabase dashboard",
+      "env_vars": ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "SUPABASE_URL", "SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY"],
+      "status_check": { "type": "supabase", "config": { "project_ref": "mwxalstbjecrdolmrvrt" } },
+      "verified": true,
+      "notes": "SUPABASE_SERVICE_ROLE_KEY is a fallback for SUPABASE_SECRET_KEY during migration to the newer sb_secret_ key format (server/billing.mjs). Billing/metering is only enforced once SUPABASE_URL + SUPABASE_SECRET_KEY are both set — otherwise the managed AI endpoint stays open/unmetered."
+    },
+    {
+      "name": "GitHub",
+      "category": "source",
+      "urls": {
+        "console": "https://github.com",
+        "docs": "https://docs.github.com"
+      },
+      "purpose": "Source control / repo host for trip-planner.",
+      "plan": "",
+      "env_vars": [],
+      "status_check": { "type": "none", "config": {} },
+      "verified": false,
+      "notes": "Repo remote not read by this scan (avoided running git remote -v outside the brief); verify the owner/repo URL directly."
+    },
+    {
+      "name": "npm",
+      "category": "package-registry",
+      "urls": {
+        "console": "https://www.npmjs.com/package/trip-fairy-helper",
+        "docs": "https://www.npmjs.com/package/trip-fairy-helper"
+      },
+      "purpose": "Publishes `trip-fairy-helper` (packages/helper/) — a CLI users run locally (`npx trip-fairy-helper`) to pair their own Claude Code session with the Trip Fairy website as a 'Your Claude Code' AI engine, no API key needed.",
+      "plan": "free (public package)",
+      "env_vars": [],
+      "status_check": { "type": "none", "config": {} },
+      "verified": true,
+      "notes": "README.md documents the pairing-code flow; packages/helper/package.json confirms the published package name/version."
+    },
+    {
+      "name": "Ignav",
+      "category": "data-api",
+      "urls": {
+        "console": "https://ignav.com",
+        "docs": "https://ignav.com/api"
+      },
+      "purpose": "Flight fare search/pricing (server/ignav.mjs, src/lib/fareOptimizer.js, src/lib/gateways.js) — airport search and fare sweeps for the flight-optimized planning feature.",
+      "plan": "unverified — check Ignav's own dashboard/plan for API limits",
+      "env_vars": ["IGNAV_API_KEY"],
+      "status_check": { "type": "none", "config": {} },
+      "verified": true,
+      "notes": "Base URL defaults to https://ignav.com/api (overridable via IGNAV_BASE_URL) per server/ignav.mjs."
+    },
+    {
+      "name": "Open-Meteo",
+      "category": "data-api",
+      "urls": {
+        "console": "https://open-meteo.com",
+        "docs": "https://open-meteo.com/en/docs/historical-weather-api"
+      },
+      "purpose": "Historical/climate weather data (server/climate.mjs) backing trip climate estimates.",
+      "plan": "free tier (public API); a customer/commercial archive endpoint is used when a key is configured",
+      "env_vars": [],
+      "status_check": { "type": "none", "config": {} },
+      "verified": true,
+      "notes": "server/climate.mjs switches between archive-api.open-meteo.com (free) and customer-archive-api.open-meteo.com (keyed) depending on whether a key env var is set — exact key env var name not confirmed in this scan; verify in server/climate.mjs."
+    },
+    {
+      "name": "Nominatim / OpenStreetMap",
+      "category": "data-api",
+      "urls": {
+        "console": "https://nominatim.openstreetmap.org",
+        "docs": "https://operations.osmfoundation.org/policies/nominatim/"
+      },
+      "purpose": "Geocoding (place name → coordinates) used throughout trip planning (src/lib/geocode.js), including airport-to-stop distance for gateway selection.",
+      "plan": "free, subject to OSM Foundation's usage policy (rate limits, user-agent requirement)",
+      "env_vars": [],
+      "status_check": { "type": "none", "config": {} },
+      "verified": true,
+      "notes": "src/lib/geocode.js references the usage policy directly and rate-limits/caches calls client-side."
+    },
+    {
+      "name": "Wikipedia",
+      "category": "assets",
+      "urls": {
+        "console": "https://en.wikipedia.org",
+        "docs": "https://en.wikipedia.org/api/rest_v1/"
+      },
+      "purpose": "Destination photos + summaries (src/lib/images.js) via the REST summary API.",
+      "plan": "free, public API",
+      "env_vars": [],
+      "status_check": { "type": "none", "config": {} },
+      "verified": true,
+      "notes": ""
+    },
+    {
+      "name": "Openverse",
+      "category": "assets",
+      "urls": {
+        "console": "https://openverse.org",
+        "docs": "https://api.openverse.org/v1/"
+      },
+      "purpose": "Openly-licensed destination images (src/lib/images.js) as an image source alongside Wikipedia.",
+      "plan": "free, public API",
+      "env_vars": [],
+      "status_check": { "type": "none", "config": {} },
+      "verified": true,
+      "notes": ""
+    },
+    {
+      "name": "Wikivoyage",
+      "category": "data-api",
+      "urls": {
+        "console": "https://en.wikivoyage.org",
+        "docs": "https://en.wikivoyage.org/w/api.php"
+      },
+      "purpose": "Destination guide text (src/lib/wikivoyage.js), CC BY-SA licensed.",
+      "plan": "free, public API",
+      "env_vars": [],
+      "status_check": { "type": "none", "config": {} },
+      "verified": true,
+      "notes": ""
+    },
+    {
+      "name": "Anthropic",
+      "category": "ai",
+      "urls": {
+        "console": "https://console.anthropic.com",
+        "docs": "https://docs.anthropic.com"
+      },
+      "purpose": "Managed AI trip-planning (api/ai/plan.js, server/llm.mjs, src/lib/aiClient.js) when the user hasn't paired their own Claude Code via trip-fairy-helper. Gated by server-side billing/metering once Supabase billing env vars are set.",
+      "plan": "pay-per-use API; unverified current spend/limits",
+      "env_vars": ["ANTHROPIC_API_KEY"],
+      "status_check": { "type": "none", "config": {} },
+      "verified": true,
+      "notes": "server/llm.mjs also supports a Vercel AI Gateway path (AI_GATEWAY_API_KEY / AI_GATEWAY_BASE_URL, default https://ai-gateway.vercel.sh) as an alternative managed-AI routing option — treat as part of the same 'managed AI' resource."
+    },
+    {
+      "name": "Lemon Squeezy",
+      "category": "payments",
+      "urls": {
+        "console": "https://app.lemonsqueezy.com",
+        "docs": "https://docs.lemonsqueezy.com"
+      },
+      "purpose": "Payments for AI-credit packs — webhook handler at api/webhooks/lemonsqueezy.js verifies LEMONSQUEEZY_WEBHOOK_SECRET and credits Supabase-tracked balances (LS_PACKS env configures pack → credits mapping).",
+      "plan": "unverified — check Lemon Squeezy dashboard for store/plan details",
+      "env_vars": ["LEMONSQUEEZY_WEBHOOK_SECRET", "LS_PACKS"],
+      "status_check": { "type": "none", "config": {} },
+      "verified": true,
+      "notes": "Verified by the presence of api/webhooks/lemonsqueezy.js and the server/.env.example var names; did not confirm the live store is active/selling."
+    },
+    {
+      "name": "Cloudflare Turnstile",
+      "category": "bot-protection",
+      "urls": {
+        "console": "https://dash.cloudflare.com/?to=/:account/turnstile",
+        "docs": "https://developers.cloudflare.com/turnstile/"
+      },
+      "purpose": "Bot-check widget (src/lib/captcha.js) loaded from Cloudflare's challenges.cloudflare.com script; README documents configuring the widget's allowed domains (mytripfairy.com + the Vercel URL).",
+      "plan": "free",
+      "env_vars": ["VITE_TURNSTILE_SITE_KEY"],
+      "status_check": { "type": "none", "config": {} },
+      "verified": false,
+      "notes": "Marked dormant per the task brief — VITE_TURNSTILE_SITE_KEY is present but empty in both .env and .env.example in this scan, so the widget appears wired but not currently keyed/active. Verify directly before relying on this."
+    }
+  ]
+}
