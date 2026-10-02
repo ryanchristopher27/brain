@@ -1,0 +1,72 @@
+/* Dev dashboard — per-project developer view. Builds on style.css's tokens/cards/pills/
+   tiles; this file only adds the layout specific to this page. */
+
+.devdash-body { background: var(--bg); }
+.dd-app { max-width: 1180px; margin: 0 auto; padding: 0 0 48px; }
+
+.dd-top { display: flex; align-items: center; gap: 20px; padding: 16px 26px;
+  border-bottom: 1px solid var(--bd); background: var(--rail); position: sticky; top: 0; z-index: 2; }
+.dd-back { color: var(--tx3); font-size: 12.5px; text-decoration: none; }
+.dd-back:hover { color: var(--tx); }
+.dd-picker { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.dd-picker-lbl { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; color: var(--faint); }
+.dd-picker select { background: var(--raised); color: var(--tx); border: 1px solid var(--bd);
+  border-radius: 7px; padding: 6px 10px; font-family: var(--ui); font-size: 12.5px; }
+
+.dd-pane { padding: 22px 26px 0; }
+
+/* header block */
+.dd-header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+.dd-header h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+.dd-header .dd-url { font-family: var(--mono); font-size: 12px; color: var(--tx3); }
+.dd-header .dd-url a { color: inherit; }
+.dd-uptime { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono);
+  font-size: 11px; color: var(--muted); }
+.dd-uptime .g { width: 7px; height: 7px; border-radius: 50%; background: var(--faint2); }
+.dd-uptime.ok .g { background: var(--green); }
+.dd-uptime.bad .g { background: var(--red); }
+
+/* cards grid */
+.dd-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 26px; }
+.dd-card { background: var(--card); border: 1px solid var(--bd); border-radius: 10px; padding: 15px 16px; }
+.dd-card.highlight { border-color: var(--amber); }
+.dd-card h3 { margin: 0 0 10px; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em;
+  color: var(--muted); text-transform: uppercase; }
+.dd-card .dd-line { display: flex; justify-content: space-between; font-size: 12.5px;
+  color: var(--tx2); padding: 3px 0; }
+.dd-card .dd-line span:first-child { color: var(--faint); }
+.dd-card .dd-na { color: var(--faint2); font-size: 12px; }
+.dd-card .dd-setup { color: var(--faint); font-size: 11px; margin-top: 8px; line-height: 1.5; }
+.dd-card .dd-setup a { color: var(--a3); }
+.dd-card ul.dd-list { list-style: none; margin: 0; padding: 0; }
+.dd-card ul.dd-list li { font-size: 12.5px; padding: 3px 0; color: var(--tx2); }
+
+/* resources */
+.dd-section-title { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+  color: var(--muted); text-transform: uppercase; margin: 6px 0 10px; }
+.dd-res-group { margin-bottom: 18px; }
+.dd-res-group h4 { font-size: 12.5px; color: var(--tx3); margin: 0 0 6px; text-transform: capitalize; }
+table.dd-res { width: 100%; border-collapse: collapse; background: var(--card);
+  border: 1px solid var(--bd); border-radius: 10px; overflow: hidden; }
+table.dd-res th { text-align: left; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em;
+  color: var(--faint); text-transform: uppercase; padding: 8px 12px; border-bottom: 1px solid var(--bd); }
+table.dd-res td { padding: 8px 12px; font-size: 12.5px; color: var(--tx2); border-bottom: 1px solid var(--divider);
+  vertical-align: top; }
+table.dd-res tr:last-child td { border-bottom: 0; }
+table.dd-res td.dd-env { font-family: var(--mono); font-size: 11px; color: var(--tx3); }
+table.dd-res a { color: var(--a3); text-decoration: none; }
+table.dd-res a:hover { text-decoration: underline; }
+.dd-unverified { color: var(--amber); font-size: 10px; font-family: var(--mono); margin-left: 6px; }
+
+@media (max-width: 860px) {
+  .dd-grid { grid-template-columns: 1fr; }
+  .dd-pane { padding: 18px 14px 0; }
+  .dd-top { padding: 12px 14px; }
+  table.dd-res, table.dd-res thead { display: block; }
+  table.dd-res tbody { display: block; }
+  table.dd-res thead tr { display: none; }
+  table.dd-res tr { display: block; padding: 10px 12px; border-bottom: 1px solid var(--divider); }
+  table.dd-res td { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; border: 0; }
+  table.dd-res td::before { content: attr(data-label); color: var(--faint); font-family: var(--mono);
+    font-size: 9.5px; text-transform: uppercase; }
+}
