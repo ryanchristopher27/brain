@@ -84,6 +84,40 @@ python -m dashboard.artifacts_cli mark --project P --file docs/spec.md --note "�
 Copies mirror their source (a deleted/renamed original is pruned on next sync). The archive is
 plain markdown, so pointing an Obsidian vault at `brain/artifacts/` gives a browsable library.
 
+## Dev dashboard (per-project status + resources)
+One page per project answering "how is the app doing / where are its resources" —
+`web/devdash.html` (project picker + `?project=<name>` deep link), backed by
+`GET /api/devdash/{name}`.
+
+**Resources** — each project declares its external services at
+`<project_root>/.brain/resources.json` (schema + loader: `dashboard/resources.py`). No
+file yet? The dashboard falls back to a brain-side seed at
+`dashboard/seed/<project>.resources.json`. Propose entries for a project with:
+```sh
+python -m dashboard.resources_cli seed --path /path/to/project            # prints JSON
+python -m dashboard.resources_cli seed --path . --out .brain/resources.json
+python -m dashboard.resources_cli validate --path .brain/resources.json
+```
+`seed` only scans (package.json deps, `.env*` names, `vercel.json`, known hostnames in
+source) and proposes — always review before trusting it.
+
+**Status** (`dashboard/devstatus.py`), each source optional and failing soft:
+- **Git** — branch, last commits, uncommitted count, ahead/behind upstream. No network.
+- **Tracker** — task counts by status + what's in review. Reuses `dashboard/tracker.py`.
+- **Hosting (Vercel)** — latest production deployment, via the Vercel REST API. Needs a
+  read-only token: create one at https://vercel.com/account/tokens, then set `VERCEL_TOKEN`
+  (env var) or add it to `~/.claude/brain-dashboard/secrets.json` (flat JSON, mode 600).
+- **Database (Supabase)** — project status/region via the Management API. Needs a token:
+  https://supabase.com/dashboard/account/tokens → `SUPABASE_ACCESS_TOKEN` (same two
+  places).
+- **Uptime** — an unauthenticated GET against the project's declared production URL.
+- Remote calls (Vercel/Supabase/uptime) are cached 120s in-process. No token is ever
+  logged or returned in an API response; `dashboard/secrets_store.py` only reads tokens,
+  never writes them.
+
+No Vercel/Supabase token exists yet in this environment — until one is set, those cards
+render a clean "not configured" state naming the exact env var and a link to create it.
+
 ## Status → milestones
 - **D1 ✅** server + Host/Origin/token security + voice-subscribe proxy
 - **D3** read panels: roster · jobs · health · activity

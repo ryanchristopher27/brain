@@ -3,11 +3,11 @@ id: 8033e3
 source: user:brain:project-dev-dashboard
 title: Per-project developer dashboard (resources, hosting, traffic)
 type: task
-status: backlog
+status: review
 assignee: 
 scoped_dir: .
 created: 2026-10-02T04:34:33Z
-updated: 2026-10-02T04:34:33Z
+updated: 2026-10-02T18:13:41Z
 ---
 
 ## Brief
@@ -19,3 +19,5 @@ A developer dashboard view per major project in brain's dashboard — one place 
 
 ## Updates
 - 2026-10-02T04:34:33Z · created
+- 2026-10-02T18:13:13Z · status: backlog → doing
+- 2026-10-02T18:13:41Z · status: doing → review (Dev dashboard built end-to-end for Trip Fairy: resources schema+seed, status collectors (git/tracker/Vercel/Supabase/uptime), API, standalone UI, 19 passing tests. No tokens exist yet for Vercel/Supabase — not-configured states explain how to add them.)
