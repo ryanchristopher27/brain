@@ -3,11 +3,11 @@ id: 87845c
 source: 
 title: T2 — Task API endpoints
 type: task
-status: review
+status: done
 assignee: 
 scoped_dir: .
 created: 2026-07-26T19:20:18Z
-updated: 2026-07-26T19:25:09Z
+updated: 2026-09-29T02:52:47Z
 ---
 
 ## Brief
@@ -26,3 +26,4 @@ Expose the tracker over FastAPI in dashboard/server.py: list projects, tasks CRU
 - 2026-07-26T19:25:09Z · status: ready → doing (building)
 - 2026-07-26T19:25:09Z · status: doing → review (endpoints built + verified)
 - 2026-07-26T19:25:09Z · result: T2 done: /api/projects, /api/tasks (CRUD), detail, status, update — all acceptance met
+- 2026-09-29T02:52:47Z · status: review → done (closed at Ryan's request in chat 2026-09-28)

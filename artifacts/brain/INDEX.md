@@ -3,7 +3,7 @@
 _Brain's copies of `brain`'s markdown artifacts. Source: `/Users/rchristopher/Desktop/Code/brain`._
 
 - **Workflow docs:** 4  (`docs/`)
-- **Task records:** 13  (`tasks/`)
+- **Task records:** 17  (`tasks/`)
 - **Session summaries:** 6 entries  (`sessions.md`)
 - **Marked deliverables:** 0  (`deliverables/`)
 

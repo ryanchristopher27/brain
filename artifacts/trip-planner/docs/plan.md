@@ -1158,3 +1158,1077 @@ Date: 2026-09-25
 | AI notes generation | User-initiated button (`lib/cautions.js` via a new `askPrompt` in `lib/aiClient.js`, kind `'prompt'`), not automatic | Costs a credit on managed AI under the outcome-based pricing model — must not fire on every trip view | 2026-09-25 |
 | Staleness | `record.cautions = { items, sig, at }`; sig fingerprints ordered stops + dates + home | Keep showing old notes with a quiet "trip changed — Refresh" nudge rather than silently going stale or auto-spending a credit | 2026-09-25 |
 | Persistence | `onRevise` (the same undoable "latest record" path `TripAudit`'s one-click fixes use) | Generation is async and user-initiated, same shape as an audit fix — not a manual field edit (`onChange`) or a silent cache fill (`onPatch`) | 2026-09-25 |
+
+---
+
+# Plan — Trip Fairy: Flight-Optimized Planning (v9)
+Date: 2026-09-26
+Status: Active
+Brainstorm: docs/brainstorm.md → "2026-09-26 · Flight-optimized trip planning (8517f3)" + addendum
+
+## Overview
+Use the trip's own shape to pick flights: compare flying a round trip to the first city against an
+open-jaw (in to the first city, out of the last), across a small flexible-date grid and up to two
+airports per end, and have the assistant explain the tradeoffs. Builds on what's live: Ignav fares +
+booking links (verified 2026-09-26), the date-finder, the Flights page, `trip.startLocation`, linked
+start/end/length, `travel[]` hops with ground estimates, and Supabase auth + usage metering (v8).
+
+## Goals & Success Criteria
+- A multi-city plan with a departure airport shows a ranked set of "how to get there and back" options
+  (price, total flight time, stops, extra ground leg) within ~10s of asking, from cache in <1s after.
+- Picking an option + date cell sets start/length and adds the legs to `travel[]` in one undoable step.
+- The chat can answer "why this one?" / "what if I leave Friday?" from the fare summary without
+  triggering new searches.
+- Live fares on the deployed site require sign-in; a signed-in user can't exceed the daily cap; repeat
+  views of the same route/dates hit the shared cache (≥50% hit rate on a repeated sweep).
+- Ignav spend stays within ~$0.30/user/day worst case.
+
+## Scope
+### In Scope
+- FO1 gating + fare cache + server-side sweep endpoint
+- Book-end options: round trip to first city vs open-jaw first/last (reverse route shown as an option,
+  not applied)
+- Gateway candidates: ≤2 airports per end (curated hub table + validated LLM suggestions)
+- Flexible-date grid: departure ±3 days × length ±1 (~21 cells per option), lock a cell
+- Precomputed fare summary in the assistant's context; tradeoff copy
+### Out of Scope (later)
+- Reordering stops to fit gateways (as an undoable AI edit)
+- Intra-trip flight hops optimization
+- Model-initiated searches (tool-style) — maybe ≤1 per turn later
+- Anonymous sessions / signed-out taste; credits for sweeps
+- Price alerts / tracking
+
+## Tech Stack & Architecture
+No new stack. Pieces:
+- **Server (shared core + Vercel fn + local helper, same pattern as `server/ignav.mjs`):**
+  `server/fares.mjs` — auth gate (reuses `resolveUser` from `server/billing.mjs`), daily cap (counts
+  `usage_events` kind `fare_search`), cache (new `fare_cache` table, service-role only), and
+  `sweep(cells)` running Ignav searches with bounded concurrency (4) and per-cell cache.
+  Endpoints: `POST /flights/search` (gated + cached), `POST /flights/sweep` (new), existing
+  airports/booking-links (airports stays open: cheap + needed for autocomplete; booking-links gated).
+  Local helper: unrestricted, in-memory cache, same sweep code.
+- **Client:** `src/lib/flights.js` sends the Supabase bearer token (same helper as aiClient); new
+  `src/lib/fareOptimizer.js` — pure: build candidate "shapes" (round-trip / open-jaw × gateways) and
+  date cells, call sweep, score + rank, produce a compact summary. UI: a "Best way there & back" card
+  on the Flights page (and a small entry point on the trip page).
+- **Scoring:** price + a time/stops penalty ($ per extra hour/stop, one "cheapest ↔ easiest" slider),
+  plus the extra ground leg's estimated cost/time from existing hop estimates.
+- Why not client-side fan-out: N browser calls can't be capped or cached server-side coherently, and
+  exposes quota. Why not a precomputed nightly job: fares are too route/date specific.
+
+## Milestones
+| # | Milestone | Description | Dependencies |
+|---|-----------|-------------|--------------|
+| FO1 | Fare gating, cache & sweep | Sign-in required for live fares on Vercel, per-user daily cap, shared `fare_cache`, `POST /flights/sweep` (server-side grid, bounded concurrency); client sends auth + handles 401/429 | v8 billing (auth, usage_events) |
+| FO2 | Book-end optimizer core | Pure `fareOptimizer.js`: candidate shapes (round trip vs open-jaw, reversed), cell generation, scoring with ground-leg cost, ranked options + summary; unit-tested | FO1 |
+| FO3 | Gateway airports | ≤2 airports per end: curated hub/metro table + LLM suggestions validated via `/flights/airports`; cached per city | FO2 |
+| FO4 | Flexible-date grid UI | "Best way there & back" card: option list + ±3×±1 heat grid, freshness label, lock → sets start/length + adds legs (undoable) | FO2, FO3 |
+| FO5 | Assistant integration | Fare summary in the trip context for the chat; tradeoff explanations; suggestions use existing ops | FO4 |
+
+## Task Breakdown
+
+### FO1 — Fare gating, cache & sweep (mid-depth)
+1. **Migration `0005_fare_cache.sql`:** `fare_cache(cache_key text pk, value jsonb, created_at)` —
+   key = sha256 of normalized request (legs, pax, cabin, max_stops, market); RLS on, no policies
+   (service role only). Index on `created_at` for pruning.
+2. **`server/fares.mjs`:**
+   - `gate(req)` → `{ userId }` or throws 401 (no/invalid token) / 429 (over cap). No-op when billing
+     isn't configured (open path, same as `/ai/plan`) and in the local helper.
+   - `withinFareLimit(userId, n)` — counts today's `fare_search` usage rows; `FARE_MAX_PER_DAY`
+     (default 150). A sweep reserves its uncached cell count up front; over-cap → 429 with remaining.
+   - `cachedSearch(body)` — read-through cache, TTL `FARE_CACHE_TTL_HOURS` (default 8); stores the
+     trimmed itineraries (top ~15 by price) to keep rows small.
+   - `sweep(cells, opts)` — cells = [{ legs, pax, cabin }]; max `FARE_SWEEP_MAX_CELLS` (default 90);
+     concurrency 4; per-cell result `{ key, cheapest, best, count, cached, error? }`; logs one usage
+     row per *uncached* cell (`kind: 'fare_search'`, `cost_usd: 0.002`, `cached` flag).
+3. **Endpoints:** `api/flights/search.js` + new `api/flights/sweep.js` + `booking-links.js` go through
+   `gate`; `server/index.mjs` routes sweep locally (no gate). `vercel.json` rewrite already covers
+   `/flights/:path*`. Search moves to `/fares/search` (2-leg capable) for open-jaw; keep round-trip
+   compatibility.
+4. **Client:** `flights.js` attaches the bearer token; maps 401 → "Sign in to search live fares" (with
+   the existing sign-in entry), 429 → "Daily fare-search limit reached — resets at midnight UTC".
+   Flights page + date-finder show those states instead of a raw error.
+5. **Verify:** stubbed-fetch harness (pattern of the credit harness): no token → 401 and Ignav not
+   called; cap reached → 429 and Ignav not called; cache hit → no Ignav call + no usage row; sweep with
+   mixed cached/uncached cells charges only uncached; concurrency never exceeds 4. Then one real
+   signed-in sweep on the deployed site.
+6. **Docs/env:** `server/.env.example` gets `FARE_MAX_PER_DAY`, `FARE_CACHE_TTL_HOURS`,
+   `FARE_SWEEP_MAX_CELLS`; README note; apply migration (user runs it in Supabase, as with 0001–0004).
+
+## Risks & Mitigations
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| Ignav rate limits a 60–90 cell sweep | Med | Med | Concurrency 4, cache, partial results stream back; cells that fail show "—" and can be retried |
+| Sweep latency too slow for the UI | Med | Med | Fill the grid progressively (return cheapest cells first / poll), cache aggressively, default to a 7×1 row first and expand on demand |
+| Open-jaw prices misleading vs separate one-ways | Low | Med | Also price two one-ways for the top option and show the cheaper |
+| Stale cached prices | Med | Low | Show "as of Nh ago"; re-search the chosen cell before adding legs |
+| Signed-out users hit a wall on Flights | High | Low | Clear sign-in prompt; non-fare parts of the app stay open; anonymous-session taste on the backlog |
+| Gateway suggestions wrong (closed/tiny airports) | Med | Low | Validate every code via `/flights/airports`; curated table first; ≤2 per end |
+
+## Dependencies
+- Supabase migration applied by the user (0005).
+- Vercel env: existing `SUPABASE_URL` / service key / `IGNAV_API_KEY`; new optional FARE_* vars.
+- Ignav `/fares/search` (1–2 legs) — verified in openapi.json 2026-09-26.
+
+## Open Questions
+- Default "cheapest ↔ easiest" weight ($/hour, $/stop) — start at $25/h, $40/stop, tune by feel.
+- Grid default: full ±3×±1 immediately, or a 7-day row first with "expand"? (Leaning row first.)
+- Should the trip page show a compact "cheapest way there & back" teaser once cached?
+
+## Decisions Log
+| Decision | Choice | Reasoning | Date |
+|---|---|---|---|
+| Account wall | None for the app; sign-in only for live fares + managed AI | Keeps the free local-first layer and first-visit experience; gates only what costs money | 2026-09-26 |
+| Fare access | Signed-in on the deployed site; local helper unrestricted | `/flights/*` was open to anyone; sweeps multiply quota use | 2026-09-26 |
+| Cost model | No credits for fare searches in v1; daily cap (150) + cache | $0.002/search makes normal use negligible; the cap stops scripted abuse | 2026-09-26 |
+| Where sweeps run | Server-side `/flights/sweep`, concurrency 4 | Cap + cache coherently, one request from the browser | 2026-09-26 |
+| LLM + fares | Precomputed summary in context; no model-initiated searches in v1 | Cheap, testable, can't burn quota | 2026-09-26 |
+| Open-jaw | Ignav `/fares/search` with 2 legs | Supported per openapi (1–2 ordered legs, independent endpoints) | 2026-09-26 |
+| Anonymous sessions | Backlog | Worth it for signup conversion later; needs abuse controls | 2026-09-26 |
+| Sweep time budget (FO1 build) | Server stops starting searches after 45s; rest return `pending`, client re-requests | Measured live: round trip ~3.4s, 4-cell sweep ~10s, **open-jaw ~26s/search** — a 21-cell open-jaw grid can't fit one request; re-requests make the grid fill progressively and finished cells come back from cache | 2026-09-26 |
+| Fare rows vs AI rate limit (FO1 build) | Migration 0005 redefines `recent_usage_count` to skip `fare_search` | It counted every usage row, so one sweep would have rate-limited the user's AI for a minute | 2026-09-26 |
+| Airport autocomplete | Stays open (not gated) | Needed before sign-in makes sense; the helper already caches it; low volume | 2026-09-26 |
+| Fare totals (FO2) | Ignav prices are the total for all travelers (verified: 2 adults = 2×); scores are per traveler (fare ÷ travelers + per-person ground + $25/h + $40/stop, × `ease`) | Keeps penalties comparable to what one person pays; UI shows totals | 2026-09-26 |
+| Backtrack cost (FO2) | Use the trip's own leg for that pair if it has numbers, else distance: ≤700 km train (~80 km/h, $0.12/km), beyond that a short flight | No extra AI call or credit; labeled as an estimate | 2026-09-26 |
+| Tests (FO2) | `npm test` = `node --test tests/` (built-in runner, no new deps); pure modules get real tests in the repo | Scratch harnesses weren't re-runnable by anyone else; mutation-checked the new suite | 2026-09-26 |
+| Gateway sources (FO3) | Curated table (metros + airport-less places) → Ignav airport search filtered to the stop's country + same city, minor fields skipped → AI suggestions only when both are empty, each verified via Ignav + ≤250 km | Airport search is name-based ("Florence" → Florence SC, not FLR); the table covers the known traps; AI fills the long tail without trusting it blindly | 2026-09-26 |
+| Airport access legs (FO3) | Nominatim-geocode each airport (name → code → city fallbacks), distance → ~60 km/h + 20 min, $0.15/km; counted in the score; unlocatable → `unknown`, no access cost | A "nearby hub" isn't free (KIX is 81 km from Kyoto); OSM names don't always match Ignav's | 2026-09-26 |
+| Traveler override (FO3) | `segment.gateways` (codes) wins over suggestions; set by the FO4 UI | The traveler knows their airports | 2026-09-26 |
+| Staged pricing (FO4) | 1) every route on one anchor date → 2) best two routes × 7 days → 3) on request, best route × ±1 day length; reversed-stop routes only for the primary airports and informational | 12 routes × 7 days would be ~84 searches and minutes of open-jaw latency; staging keeps a first answer ~30–45s and a full grid ~2 min, most repeats from cache | 2026-09-26 |
+| Using an option (FO4) | `applyOption`: dates + length + one flight leg per home hop (named like the hops, airports/connections in fields + notes), replacing old home-hop legs; saves the chosen airports on the stops; one `onRevise` step (⌘Z undoes all) | Legs must sit on the route or the trip audit flags them; one undo for one decision | 2026-09-26 |
+| Card resets (FO4) | Reset priced results only when stops/airports/home/travelers change — not dates or length | "Use these" changes the dates itself; cells stay valid for their own dates | 2026-09-26 |
+| Assistant + fares (FO5) | `lib/fareStore.js`: the card saves a diverse set of ≤10 priced options (cheapest overall, top by rank, best + cheapest per route and per length) per trip, keyed to the trip's shape, expiring with the 8h fare cache; the edit prompt gets them with short refs + rules; no model-initiated searches | The chat explains real tradeoffs without spending searches; "use the cheapest" must see the actual cheapest | 2026-09-26 |
+| Chat can use an option (FO5) | New op `{op:'use', target:'fareOption', id:'F2'}`, applied in App before other ops via `applyFareOps` → the same `applyOption` as the card; one AI edit (Apply / Undo); refs never shown to the traveler | Setting dates alone would leave flights out of sync; one path for card and chat | 2026-09-26 |
+
+## Guests — signed-out taste (anonymous sessions)
+Date: 2026-09-26
+
+| Decision | Choice | Reasoning | Date |
+|---|---|---|---|
+| Mechanism | Supabase anonymous sign-in, started lazily on a signed-out visitor's first live-fare or managed-AI call (then retry); browsing never creates one; if disabled in Supabase, fall back to the sign-in prompt | Keeps the no-account-wall decision; existing per-user ledger/caps apply unchanged | 2026-09-26 |
+| Allowance | 3 one-time AI credits, 25 fare searches/day, 40 background calls/day; no monthly top-up | Enough to see one comparison + a couple of assistant turns | 2026-09-26 |
+| Abuse control | Per-IP daily cap on all guest usage (150 rows), IP stored only as a salted hash (`usage_events.ip_hash`); plus Supabase's own anonymous sign-in rate limit | Anonymous users are free to mint; per-user caps alone don't bound cost | 2026-09-26 |
+| Guest → account | Normal sign-up/sign-in (no identity linking); trips live in the browser and merge on sign-in; `ensure_free_grant_v2` gives the signup grant if the same user id ever becomes permanent | Avoids Supabase manual-linking config; the trips promise holds via the existing merge | 2026-09-26 |
+| CAPTCHA | Not in v1 | The IP cap bounds cost; add Turnstile if abuse shows up | 2026-09-26 |
+
+## Chat history per trip (a44747)
+Date: 2026-09-26
+
+| Decision | Choice | Reasoning | Date |
+|---|---|---|---|
+| Model | Many conversations per trip; the assistant works in one — the latest unless idle 6h (then the next message starts a new one), "New chat", or "Continue" (pinned) | Short prompts + a browsable history; user picked button + 6h idle | 2026-09-26 |
+| Where | "Chats" tab in the trip bar (count): list newest first with date, messages, changes applied / flights chosen; open → transcript with timestamps and what each reply proposed/applied; Continue, Delete, Clear all | User picked a tab over a rail dropdown | 2026-09-26 |
+| Brainstorm link | Promoting an idea attaches the brainstorm as "How this trip started" (read-only); plans also list their proposal's conversations | Keeps the trail from idea → proposal → plan | 2026-09-26 |
+| Storage | `lib/chats.js` module store (useSyncExternalStore), one localStorage key, old per-trip threads migrated once; synced to `trip_chats` (0007, RLS own rows) like trips — LWW by updatedAt, tombstones, pull-merge on sign-in, debounced incremental push | Local-first + cross-device, no new sync model | 2026-09-26 |
+| Privacy / retention | Only the owner can read (RLS); kept until deleted; deleting a trip deletes its chats; flight-offer lists trimmed to 5 when saved | Chats can hold personal plans; keep rows small | 2026-09-26 |
+
+## Trip audit layer 2 — AI consistency pass (da94b7)
+Date: 2026-09-26
+
+| Decision | Choice | Reasoning | Date |
+|---|---|---|---|
+| Scope | `lib/auditAi.js`: user-initiated ("Check with AI", 1 credit on managed AI) — finds what the deterministic audit (layer 1) can't: wrong-city activities, travel-time/pace mismatches, budget contradictions, seasonal/closure timing, chat asks the plan ignores, missing basics (no lodging) | Same posture as `lib/cautions.js` — never auto-spend a credit; deterministic checks stay free and instant | 2026-09-26 |
+| Fix protocol | Issues carry ops from the same patch protocol the assistant uses, restricted to a safe subset (update/move/remove activity, update segment, update field) — restated in the prompt since `aiClient.js`'s `OP_PROTOCOL` isn't exported | Reuses `applyOps` (one undoable step via `onRevise`) instead of inventing a second apply path | 2026-09-26 |
+| Validation | `runAiAudit` normalizes defensively: drops issues with no title, caps at 6, and drops individual ops whose id doesn't exist in the record or whose op/target isn't in the allowed subset — an issue can still surface with `ops: []` (no Fix button) rather than being dropped entirely | A model slip (invented id, wrong target) shouldn't sink an otherwise-real finding, but must never reach `applyOps` unvalidated | 2026-09-26 |
+| Caching | `record.aiAudit = { issues, sig, at }`, written via the same `onRevise` path as everything else (like `cautions`) — no special "not a user edit" carve-out exists for AI-derived caches in this codebase, so this doesn't invent one | Consistent with the one precedent (`GoodToKnow`/`cautions.js`) rather than adding new undo-history semantics | 2026-09-26 |
+| Fingerprint | `aiAuditSig`: stops+nights, dates, activities (id/name/day/segment/time), pace, budget, travelers, interests — notes/lodging text excluded | Matches what the prompt actually reasons over; avoids "stale" nags for cosmetic edits | 2026-09-26 |
+| Fixing/dismissing | Fixing an AI issue applies its ops **and** strips that issue from the cached list in one `onRevise` (so it doesn't linger looking unresolved); "Fix all" pools deterministic + AI issues; Dismiss (×) removes an issue from the cache without touching the trip | The cached AI list, unlike `auditTrip()`, isn't recomputed live from the record, so resolution has to be explicit | 2026-09-26 |
+| Testability | `runAiAudit(record, settings, { ask })` takes an injectable `ask` (defaults to `askPrompt`) instead of mocking the `aiClient` module | No existing ESM-mocking convention in this test suite; this keeps `auditAi.test.mjs` network-free without inventing one | 2026-09-26 |
+| Verified live | Ran a real check through the local helper (`npm run ai`, no mocks) against a deliberately inconsistent trip — got back a wrong-city activity, a budget contradiction, and a missing-lodging issue, all with valid ops on real ids | Confirms the prompt + normalization work against actual model output, not just mocks | 2026-09-26 |
+
+## Free official data (87dfc0)
+Date: 2026-09-26
+
+| Decision | Choice | Reasoning | Date |
+|---|---|---|---|
+| Exchange rates | `lib/fx.js`: Frankfurter (ECB) as primary, `open.er-api.com` merged in only for currencies Frankfurter lacks (e.g. VND); cached in localStorage 12h, in-flight dedupe per base, `deps` injection (`fetch`/`storage`/`now`) for tests, never throws | Matches the research doc's ranked shortlist; per-currency fallback (not whole-source) keeps ECB's better-trusted numbers wherever it has them, and avoids a second network call on every load | 2026-09-26 |
+| Where shown | A compact "Money" card on the City page (Overview, right rail): "1 {trip currency} ≈ N {local}", rate date, and a source credit link (Frankfurter or ExchangeRate-API, whichever actually served that currency) | Where a traveler is actually converting prices in their head; understated, not a new budgeting surface | 2026-09-26 |
+| Budget math (`lib/budget.js`) | **Not** touched — left as-is | It already assumes every cost string is in the trip's own currency (no per-item currency field to convert from); wiring real FX into it would mean inventing a mixed-currency-costs feature that doesn't exist today. Flagged here per the task's "skip and note" instruction | 2026-09-26 |
+| Country facts | One-time build (`scripts/build-country-facts.mjs`) queries Wikidata SPARQL (P2853 plug, P2884 voltage, P1622 driving side, P474 calling code, P38→P498 currency, P2852 emergency number) for all sovereign countries → `src/data/countryFacts.json` (196 countries, ~25.5 KB) | REST Countries is dead (confirmed in research doc); Wikidata is CC0 and doesn't need a runtime call/key; baking it avoids a live SPARQL dependency in the shipped app | 2026-09-26 |
+| Plug-letter mapping | Wikidata's P2853 values are plug *standards* (e.g. "BS 1363", "Europlug"), not IEC letters — mapped by hand (`PLUG_LETTER` in the build script) from the ~14 distinct items actually used by sovereign countries; a few ambiguous items (e.g. the catch-all "British and related types" item, which doesn't resolve to one letter) and known Wikidata gaps (India's Type M, South Africa's full set, Thailand entirely untagged) are hand-fixed in `MANUAL_OVERRIDES`, noted in the script's comments | Wikidata doesn't have a clean "IEC plug letter" property; the override list is small and reviewed against the task's own sanity list (JP, GB, US, PT/FR/DE, AU, IN, BR all check out) | 2026-09-26 |
+| Mains frequency | Not a queryable Wikidata property for this — heuristic (`≤127V → 60Hz, else 50Hz`) with a short hand-checked `FREQ_OVERRIDES` list for exceptions (Japan's 50/60 split grid, Brazil, South Korea, etc.) | Good enough for "will my charger work" without a data source that doesn't exist | 2026-09-26 |
+| Where shown | City page Overview: a "Practical" card (plug letters + voltage/Hz, driving side, calling code + emergency number). Good to know: one `Plug` line per country whose plugs or voltage differ from the traveler's home, only when home resolves to a country | Understated, not gating anything on AI | 2026-09-26 |
+| Home → country | `lib/countryFacts.js#homeCountryCode`: tries the home name as a country name first (rare), else a small hand-built table of ~50 major hub-airport IATA codes → ISO2 | `settings.home`/`trip.startLocation` store a city + airport code, not a country, and there's no live geocode call available cheaply here; explicitly best-effort — unresolvable homes just skip the comparison (per the task's own allowance) | 2026-09-26 |
+
+## AI settings + model picker
+Date: 2026-09-27
+
+| Decision | Choice | Reasoning | Date |
+|---|---|---|---|
+| Default | "Trip Fairy" (id `auto`) — our routing: the right model per kind of task (server/llm.mjs modelsForKind); background work (places, weather…) always uses it | Most people shouldn't have to think about models | 2026-09-27 |
+| Catalog | Server-side `server/models.mjs` (auto, Sonnet 5, Haiku 4.5, gpt-oss-120b, Opus 5.5 premium); published on /ai/health with availability; api/ai/plan.js refuses anything outside it (400 model_unavailable); MODELS_DISABLED env to pull one | The server is the security boundary — no arbitrary expensive models on our key | 2026-09-27 |
+| Pricing | Tiered: premium ×3 on the whole turn (base + outcome surcharge); everyday models and auto unchanged | User picked tiered; keeps Opus-heavy use paying its way | 2026-09-27 |
+| Scope | Per conversation (saved on the conversation / brainstorm session); new chats start on the provider's default | User picked per conversation | 2026-09-27 |
+| Allow list | Settings → AI: per-provider checkboxes (Trip Fairy always on) + default for new chats; stored in settings (allowedModels/defaultModel); a blocked or unavailable pick falls back to the default | A preference, not security | 2026-09-27 |
+| Own Claude Code / key | Same picker with Claude models; "Trip Fairy" = Haiku for background, Sonnet for edits/chat, done client-side; non-Claude picks never sent there | Consistent UX across providers | 2026-09-27 |
+| Settings | Tabbed: General · AI · Account & credits | Room for the AI controls; credits/sign-in in one place | 2026-09-27 |
+
+## Bot check for guests + email sign-in (2026-09-27)
+
+Anonymous guest sessions cost nothing to create, so the per-IP cap was the only
+brake on scripted abuse of the guest allowance. Supabase's built-in "Bot and
+Abuse Protection" (Cloudflare Turnstile) now guards session *creation*:
+`src/lib/captcha.js` renders an invisible, single-use Turnstile check and passes
+its token on guest sign-in, email sign-up / log-in, magic link and password
+reset. Google OAuth isn't covered (Google does its own checks).
+
+| Decision | Choice | Reasoning | Date |
+|---|---|---|---|
+| Where to enforce | Supabase Auth CAPTCHA, not our API | Stops bot sessions from existing at all; no server code; the per-IP cap stays as a second layer | 2026-09-27 |
+| Widget | Turnstile, `interaction-only` | Free, no puzzles for most people; a box appears only when Cloudflare is unsure | 2026-09-27 |
+| Rollout | Off until `VITE_TURNSTILE_SITE_KEY` is set | Deploy the key first, then enable CAPTCHA in Supabase — the reverse order breaks sign-in | 2026-09-27 |
+
+---
+
+# Plan — Broader ideation: seasons, routes, options & versions (5705ac)
+Date: 2026-09-27
+Status: Draft
+Brainstorm: docs/brainstorm.md → "2026-09-27 · Broader ideation"
+
+## Overview
+Make the early, undecided stage of a trip explorable:
+- **When to go:** real climate normals, per stop and for the whole route.
+- **Other shapes of the trip:** throwaway drafts and plans, compared side by side.
+- **Real choices inside a plan:** leg modes, stays, food, things to do — each a shortlist with one
+  pick.
+
+Builds on the proposal → plan lifecycle (N1–N5), T2 leg options, and the fare optimizer (FO1–FO5).
+
+**Reality check against the code (2026-09-27):**
+- Legs already carry `options[]` (v6) with an on-demand "compare ways to get there" panel on
+  TripPage. BI2 is therefore small: finish and unify, don't build.
+- Weather today is an LLM guess of one high per city (`derive.js deriveWeather`).
+
+## Goals & Success Criteria
+- A proposal with open dates shows, per stop, 12 months of typical high/low, rainy days and
+  sunshine, plus a route verdict ("Best: May, Sep–Oct"). No AI call is involved.
+- A dated trip shows real normals for its month. The LLM weather call is gone, with the LLM kept
+  only as a fallback.
+- Two or more alternatives (plans or drafts) can be compared on one screen with differences
+  highlighted, including on phones.
+- "Try a version where…" produces a draft in one step. "Keep as plan" promotes it.
+- Every item with alternatives uses one shape (`options[]` + `pickedId`). Audit, budget and the
+  assistant read only the pick.
+
+## Scope
+### In Scope
+- Climate normals service with a shared cache, a when-to-go UI and a route verdict (BI1).
+- Unify leg options with live flight fares and the pick semantics (BI2).
+- Compare view, drafts, and "Keep as plan" (BI3).
+- AI route alternatives as drafts (BI4).
+- Shortlists for stays / food / do, with a `pick` op (BI5).
+
+### Out of Scope
+- Crowd or price seasonality from paid data. Fare seasonality stays an on-request sample
+  (BI4 at most).
+- School-holiday calendars — only public holidays exist (`holidays.js`).
+- Nested versions of versions. Drafts don't have drafts.
+- Real-time forecasts. Normals only; a forecast for trips under 14 days out is a later add.
+
+## Tech Stack & Architecture
+Same stack: React/Vite client, `server/*.mjs` shared by the dev helper (127.0.0.1:8787) and Vercel
+`api/*`, and Supabase.
+
+**Climate data — decision needed.** Three candidates:
+| Source | Accuracy (Lisbon Jan / Jul highs; real ≈ 15 / 28 °C) | Cost / terms | Verdict |
+|---|---|---|---|
+| **Open-Meteo archive** (ERA5, ~10 km), 10-year daily → monthly means | 14.6 / 27.7 ✔ | Free tier is **non-commercial**; commercial use needs their paid API plan | **Recommended.** Cache per ~0.1° cell forever, so calls stay tiny. `OPEN_METEO_API_KEY` switches to the commercial endpoint. |
+| NASA POWER climatology (0.5° grid) | 18.1 / 32.4 ✘ (coarse cells mix coast and inland) | Free, public domain | Fallback only |
+| Keep the LLM | unverifiable | AI credits | Last-resort fallback |
+
+**Flow:** client → `GET /climate?lat&lng` → `server/climate.mjs`:
+1. Snap to a 0.1° cell.
+2. Look up Supabase `climate_normals`.
+3. On a miss, fetch the 10-year daily archive (~135 KB, ~1 s) and reduce it to 12 months of
+   `{hi, lo, rainDays, sunH}`.
+4. Store the result.
+
+The client also caches per cell in localStorage. Normals don't change, so there is no TTL.
+
+**Options pattern (BI2/BI5):** `options[]` + `pickedId` on the item. The picked option's fields
+stay mirrored on the item itself, so every existing reader (audit, budget, map, prompts) keeps
+working unchanged.
+
+**Drafts (BI3/BI4):** `drafts[]` on the proposal record (capped at 3). Each draft is a light trip
+shape: `{id, name, stops:[{city,country,nights}], startDate?, summary, metrics}`. "Keep as plan"
+runs the existing snapshot escalation.
+
+## Milestones
+| # | Milestone | Description | Dependencies |
+|---|-----------|-------------|--------------|
+| BI1 | Season explorer | Climate normals service + shared cache; 12-month when-to-go per stop; route "best months" verdict; replaces LLM weather (LLM kept as fallback) | Migration 0008 (user OK); climate-source decision |
+| BI2 | Leg options, finished | Unify `options[]` + `pickedId` on legs; live Ignav fare as the flight option; options visible on proposals; audit/budget read the pick | — |
+| BI3 | Compare + drafts | `drafts[]` on proposals; compare view for plans + drafts (phone cards); "Try a version where…" → draft; "Keep as plan" | BI1 (weather-fit metric), BI2 (travel-time metric) |
+| BI4 | Route options | "Other ways to do this trip" → 2–3 AI route drafts with travel time, rough cost, weather fit; optional sampled fares via the fare optimizer | BI3 |
+| BI5 | Shortlists | `options[]` + `pickedId` for stays (price tiers) and do/food pools; Swap / More like this; a `pick` op for the assistant | BI2 pattern |
+
+## Task Breakdown
+
+### BI1 — Season explorer (mid-depth)
+**Server**
+- `server/climate.mjs`:
+  - `cellOf(lat,lng)` → 0.1° key.
+  - `fetchNormals(cell)` → Open-Meteo archive for the last 10 full years:
+    `temperature_2m_max/min`, `precipitation_sum`, `sunshine_duration`.
+  - `reduceMonthly(daily)` → 12 × `{hi, lo, rainDays (≥1 mm), sunH}`, rounded.
+  - `getNormals(lat,lng)` → cache-first.
+  - Uses the customer endpoint + key when `OPEN_METEO_API_KEY` is set.
+- `supabase/migrations/0008_climate_normals.sql`:
+  - Table: `cell text pk, lat, lng, months jsonb, source text, years text, fetched_at`.
+  - RLS: public read, service-role write.
+- `api/climate.js` + a vercel.json rewrite `/climate`. The dev helper gets the same route; the
+  Vite proxy gets `/climate` → 127.0.0.1:8787.
+  - Response cache: `s-maxage=31536000, immutable`.
+  - Validate lat/lng ranges; 400 otherwise.
+
+**Client**
+- `src/lib/climate.js`:
+  - `loadNormals(lat,lng)` with a localStorage cell cache and in-flight de-dupe.
+  - `monthScore(m, prefs)`: comfortable highs (~18–28 °C by default; warmer when interests include
+    beach), penalizing rainy days.
+  - `routeVerdict(stopsNormals)` → best months across all stops, and their spread.
+  - All pure and unit-tested.
+- `WeatherStrip` becomes **When to go**:
+  - **Dated trip:** that month's hi/lo + rain days per stop from normals, labeled "typical ·
+    May (2015–2024)".
+  - **Dates open / proposal:** a 12-month row per stop (a colour cell per month, best months
+    marked) plus a route verdict line.
+  - Tapping a month opens the dates popover. Holiday markers come from `holidays.js` when dated.
+- Fallback chain: normals → existing LLM `deriveWeather` → the neutral placeholder.
+- Audit: the weather cache signature changes to the normals source, so the audit doesn't flag
+  stale LLM weather.
+- Assistant context: add a compact normals summary for the trip's stops, so the chat can answer
+  "when should I go?" from data.
+
+**Acceptance**
+- Lisbon normals are within ~1 °C of published values.
+- A second load of the same city makes no network call.
+- A proposal with open dates shows 12 months and a verdict.
+- A dated plan shows its month.
+- There is no AI call for weather when normals load.
+- Works at 375 px.
+- Tests cover `reduceMonthly`, `monthScore` and `routeVerdict`.
+
+### BI2–BI5
+High-level only for now; expand when each starts.
+
+## Risks & Mitigations
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| Open-Meteo commercial terms | High (we sell credits) | Med | Paid plan via env key before public launch; the cache keeps call volume tiny; NASA POWER as an emergency fallback |
+| Archive fetch slow (~1 s × stops) on first view | Med | Low | Parallel per stop, shared cache, skeleton UI |
+| Coordinates missing on a stop | Med | Low | Stops are already geocoded (`lib/geo.js`); otherwise the LLM fallback |
+| Options/drafts bloat synced trip rows | Med | Med | Caps (5 options/slot, 3 drafts); drafts hold no activities |
+| Unpicked options leak into audit/budget/prompts | Med | Med | The pick is mirrored onto the item; readers never read `options[]` |
+| Alternative generation burns credits | Med | Med | On request only; priced per action; background model for bulk |
+
+## Dependencies
+- Supabase migration 0008 — applied only with your OK.
+- Open-Meteo (paid plan for commercial use — your call and account).
+- Existing: `lib/geo.js`, `holidays.js`, T2 leg options, fare optimizer, escalation snapshot.
+
+## Open Questions
+- Climate source and plan: Open-Meteo paid now, at launch, or NASA POWER until then?
+- Month-score preferences: fixed comfort band, or tuned by trip interests (beach, ski)?
+- Compare view on phones: cards vs a two-column diff.
+- Credit prices for "generate a version / routes / shortlist".
+
+## Decisions Log
+| Decision | Choice | Reasoning | Date |
+|---|---|---|---|
+| Alternatives model | Plans + drafts for structure; `options[]` + `pickedId` for contents | Avoids nested versions; one shared pattern | 2026-09-27 |
+| Drafts | Throwaway, stored on the proposal, "Keep as plan" promotes | User wants both quick comparison and durable versions | 2026-09-27 |
+| Shortlists | Proposals and plans, one pick, swap anytime | User choice | 2026-09-27 |
+| BI2 scope | Finish/unify existing leg options rather than build | `options[]` + panel already shipped (v6) | 2026-09-27 |
+| Pick mirroring | The picked option's fields are copied onto the item | Every existing reader keeps working | 2026-09-27 |
+| Climate cache | Server + Supabase per 0.1° cell, no TTL; plus a client cache | Normals are static; minimizes paid calls | 2026-09-27 |
+
+**BI1 update (2026-09-28):** Open-Meteo's pricing page shows three things.
+- Historical data needs the **Professional** plan; Standard excludes it.
+- A 10-year fetch counts as ~260 calls, since every 2 weeks of data is one call. The free tier
+  (10k calls/day) therefore covers ~38 *new* cells a day.
+- CC BY 4.0 attribution is required. It is now shown on the When to go card.
+
+Migration 0008 is applied, and a production write was verified.
+
+**BI2 shipped (2026-09-28).** A reality check showed `options[]` and the options panel already
+existed, on proposals too, and that the budget already read the pick through mirrored fields. BI2
+therefore became `src/lib/legOptions.js`:
+- **`pickLegOption`:** switching away from a chosen flight stashes its details in that option's
+  `snapshot` and clears the flight-only fields; switching back restores them. This fixes a real bug
+  where a train leg kept a stale booking link.
+- **Chosen flights show as themselves** in the panel ("your flight").
+- **Flights page / "Use these dates" picks** keep the replaced leg's alternatives
+  (`inheritOptions`).
+- **Refreshed estimates never overwrite** a live fare or a stashed flight (`mergeOptions`).
+- **"Check live flight price" on dated plans:** one Ignav one-way search at 1 adult, to compare
+  with the per-person estimates. The hop date comes from the day model.
+- **Assistant mode changes** (`update travel {mode}`) go through the same pick.
+- **Option order** stays stable as the pick changes.
+
+**Known and pre-existing, not changed:** the budget adds per-person estimates to all-traveler
+chosen fares without scaling by traveler count.
+
+### BI3 — Compare + drafts (mid-depth, 2026-09-28)
+**Data**
+- `proposal.drafts[]`, at most 4 per proposal. Each draft is
+  `{ id, name, summary, prompt, baseId, createdAt, stops: [{ city, country, nights, lat, lng }], startDate?, month? }`.
+- Drafts live on the root proposal, even when drafted from one of its plans (`baseId` records
+  which). They hold no activities and no legs, and are additive to the synced record.
+
+**Generation.** "Try a version where…" → `askPrompt`, priced as one reasoning turn (1 credit on
+managed AI). The draft JSON has no `ops`, so outcome pricing stays at 'prompt'.
+- **Prompt input:** the base trip context, climate normals when cached, and the request.
+- **Reply:** `{ name, summary, stops, startDate?, month? }`. Parse, validate and cap it
+  (`lib/drafts.js normalizeDraft`).
+
+**Compare view** — a new "Versions" tab (`page=versions`).
+- **Columns:** the proposal, then its plans, then its drafts.
+- **Rows:** route (cities that differ from the first column are highlighted), nights / stops /
+  moves, when (dates or month) with weather fit from BI1 normals, travel time between stops (real
+  legs where they exist, otherwise a distance-based estimate), budget (`computeBudget`), and summary.
+- **Phones:** snap-scrolling cards with the same rows.
+
+**Actions**
+- **Open:** plan or proposal.
+- **Keep as plan:** a draft becomes a plan via `draftToPlan`. It snapshots the base and replaces
+  its stops with the draft's. Activities follow their city when that city survives; others are
+  dropped. The draft is then removed.
+- **Discard:** delete the draft.
+
+**Acceptance**
+- A Lisbon + Porto proposal, asked for "a version with Seville instead of Porto", gets a draft whose
+  columns show the swap highlighted.
+- "Keep as plan" opens the new plan with Seville, and Lisbon's activities are kept.
+- Works at 375 px.
+- Pure logic (`normalizeDraft`, `draftToPlan`, metrics) is unit-tested.
+
+**BI3 shipped (2026-09-28).**
+- **Code:** `src/lib/drafts.js` holds the pure logic (normalize, cap, `draftToPlan`,
+  `versionMetrics`). `src/pages/VersionsPage.jsx` is the new "Versions" tab.
+- **Verified live:**
+  - Drafted "we swap Porto for Seville" (1 credit): Lisbon 4 + Seville 4, ~5h36 between stops,
+    "Best: May".
+  - "Keep as plan" opened a new plan with coordinates. It kept the home → Lisbon leg and
+    removed the draft.
+- **Change from the plan:** budgets compare *on the ground* (stays + food + activities). Travel is
+  shown separately ("+ $1.3k travel so far" / "not priced yet") because drafts have no legs, so a
+  total would flatter them.
+- **Phones:** section tabs tightened so five fit at 375 px (a scrolling row would clip the Cities
+  dropdown); cards snap with 16 px scroll padding.
+
+**BI4 shipped (2026-09-28).**
+- **"Other ways to do this trip":** one `askPrompt` call (1 credit) returns 3 route drafts, each
+  with an `angle`. `normalizeRoutes` drops repeats and the current route.
+- **"Price flights from <home>" on a draft:** one live Ignav search. It is a round trip when the
+  route starts and ends at the same airport and returns home, otherwise open-jaw. The dates are
+  the trip's own, else the 15th of the draft's month / the route's best month, at least 3 weeks
+  out (`sampleDates`). The fare is stored on the draft as
+  `fares: { price, currency, dep, ret, sampled, route }`.
+- **Verified live on the Portugal proposal:**
+  - Routes: "Lisbon Slow Stay" (Fewer moves), "Porto, Douro & Guimarães" (Northern swap),
+    "North to South" (Better order, via Coimbra).
+  - "North to South" priced at DEN→OPO · LIS→DEN, $1,880 for 2, sampled Sep 15–23, 2027.
+
+**BI5 shipped (2026-09-28).** A reality check showed the candidate pools already existed
+(`segment.detail.pois`: 4–5 stays, 6–8 food / do per stop), so BI5 adds the *picks* on top rather
+than a new `options[]` structure. The code is in `src/lib/shortlist.js`.
+- **Stays:** one per stop in `segment.stayPick`. On plans it is mirrored into `lodging`, but a
+  hand-typed lodging is never overwritten. Stays carry Budget / Mid-range / Splurge tiers.
+- **The budget's lodging** uses the picked stay's quoted price. It reads the trip-currency amount,
+  taking the middle of a range: "~$65–90 (€60–80)" → $78. If there's no quote it uses the price
+  level's norm; stops without a pick keep the $120 norm.
+- **Food / things to do:** `poi.picked` puts a place on the traveler's list, with a "My list"
+  filter. Picks sort first.
+- **Swap / More like this:** a background AI call per click; only new, same-kind places are kept.
+- **"Refresh suggestions"** now keeps listed places and the picked stay.
+- **Assistant:** the new op `{ op:'pick', target:'place', data:{ segmentId, name, on } }`. Its
+  context lists stays with prices, the pick, and the list, and its proposal cards read
+  "Stay at …" / "Add to your list …".
+- **Verified live:**
+  - Picked Casa Amora → lodging $892.
+  - Listed Time Out Market → "More like this" added 3 food halls.
+  - Asked the assistant "pick the cheapest stay in Lisbon" → it proposed the correct pick ops;
+    Apply switched the stay.
+
+---
+
+## Pricing display: per traveler or trip total (2026-09-28) — replaces #3a7a04's "group total"
+
+**Decision.** Money is normalized **per traveler** internally, and totals are derived (× travelers).
+The traveler chooses which leads in Settings → General → **Show prices**: *Per traveler* (default)
+or *Trip total*. The other figure shows underneath in smaller text whenever there's more than one
+traveler. This replaces the group-total approach from commit deaefac rather than stacking on it.
+
+| Source | Basis → per traveler |
+|---|---|
+| Chosen Ignav fare (`priceAtSelection`), hand-typed leg cost | total → ÷ travelers |
+| AI travel estimate, live one-way check (`derived` / `costBasis:'pp'`) | already per person |
+| Activity cost marked "pp" / "per person" | already per person |
+| Plain activity cost | total → ÷ travelers |
+| Food norm | per person per day |
+| Stays | per night per **room** → × `rooms` ÷ travelers |
+
+- **Rooms:** a new trip field `rooms`, defaulting to ceil(travelers / 2) and editable next to
+  Travelers ("we assume 2 per room"). The assistant can set it, and it's in the assistant and
+  trip-audit context.
+- **Budget target (`trip.budget`) is per traveler.** It's compared per traveler, or as target ×
+  travelers in Trip total mode. The labels and AI prompts say so. Existing budget values aren't
+  migrated.
+- **One formatter:** `src/lib/price.js` (`priceLines`, `formatMoney`) and
+  `src/components/Price.jsx` (stack / inline / short variants; the mode comes from
+  `PriceModeContext`, provided by App from `settings.priceMode`). Used by the budget donut, leg
+  headers and option chips, Flights results, the Best-way card (cells, list, trade-off notes), the
+  date finder, Versions cards (on the ground, travel so far, draft fares), and the city-page stay
+  cards (per-traveler nightly price).
+- `computeBudget` returns `perTraveler` and `total` for every segment, plus `travelers` and `rooms`.
+- **Settings are stored per device,** like every other setting today; there's no account-level
+  settings sync yet.
+- **Verified:** unit tests; the smoke test (now also covering flight results and Trip total mode);
+  the browser at desktop and 375 px with 1, 2 and 3 travelers, 1 vs 2 rooms, and both modes.
+
+**Follow-ups (2026-09-28).**
+- **Activity prices** in the itinerary go through the shared `<Price>` too ("pp" costs stay per
+  traveler; plain costs are totals ÷ travelers). Non-numeric costs like "Free" show as written.
+- **Light / dark mode:** Settings → General → Theme = Dark (default, the original look) / Light /
+  System.
+  - `src/lib/theme.js` sets `<html data-theme>`, and an inline script in `index.html` applies the
+    saved theme before first paint, so there's no flash.
+  - `src/index.css` has a `[data-theme="light"]` palette over the same tokens. The accent and
+    neutral ramps are inverted, so tinted chips and bubbles flip correctly.
+  - The basemap has a light palette (`tripFairyMapStyle(theme)`), and maps rebuild on a theme
+    change.
+  - Settings previews the theme live; Cancel restores the saved one.
+  - The few hard-coded dark colours (image placeholders, title shadows) now use tokens.
+
+**Quick fixes (2026-09-28).**
+- **Implausible travel options** (e.g. a 58h "drive" Denver → Lisbon) are dropped when derived and
+  hidden in the options panel. Ground modes are capped by their own estimate: walk 6h,
+  car/bus/train 24h, ferry 48h. The current pick is always shown.
+- **Typed costs** in the trip editor pick their basis from the text: "pp" means per person,
+  otherwise it's a trip total. A typed cost on an AI-estimated leg stops counting as per person.
+  Placeholders and hints explain this.
+- **Installed-app colours** follow the theme: the startup script and `applyTheme` set
+  `theme-color`, the iOS status-bar style, and the `dark` class.
+- **Production** at mytripfairy.com was checked and serves all of today's work (theme script,
+  climate endpoint, AI health, latest bundle and lazy map chunk).
+
+---
+
+# Plan — My trips page (#1f2a81)
+Date: 2026-09-28 · Status: Active
+
+**Goal.** One place for everything you've planned: a list like Home's plus a map of every trip's
+stops and route, each trip in its own colour, filterable.
+
+**Model**, in pure `src/lib/myTrips.js`:
+- **A "trip"** is a root proposal plus its plans. Orphan plans count as their own trip.
+- **The lead version** decides what a trip shows: the most advanced plan (completed > booked >
+  planned, then most recently edited), else the proposal. Status, dates, length, countries and the
+  map route all come from it.
+- **Colour:** trips get stable colours from an 8-hue palette that reads on both themes, assigned
+  in list order (newest first).
+- **Filters:** a text search (title, cities, countries); status (idea / planned / booked /
+  completed); when (upcoming / past / dates open, relative to today); country; length (≤ 7,
+  8–14, 15+ days).
+- **Summary counts:** trips, countries, cities (a first step towards profile stats, #958e19).
+
+**UI**
+- **A global page** (`?page=mytrips`, like Home, with no trip bar), reached from a **My trips**
+  tab in the header. Home's "Your trips" gets a "See all" link.
+- **Map:** trip-coloured stop dots, with each trip's route as coloured lines. There are no
+  travel-mode badges on the overview; clicking a stop opens that trip.
+- **List:** a colour swatch, lead-version facts and a plan count. Filters are chips / selects
+  that wrap on phones.
+- **The assistant** on this page behaves like Home (brainstorm).
+
+**Map changes:** legs take an optional `color`, a `badges` prop turns mode badges off, and a new
+marker kind `trip` is a small coloured dot.
+
+**Acceptance.** Every trip is listed and mapped in matching colours, filters narrow both,
+clicking opens the trip, it works at 375 px and in light / dark, pure logic has tests, and a
+smoke-test step covers it.
+
+**My trips shipped (2026-09-28).**
+- **New code:** `src/lib/myTrips.js` (pure, 4 tests, mutation-checked) and `src/pages/MyTripsPage.jsx`.
+- **Map support:** coloured legs, `badges={false}`, and the `trip` marker kind in
+  MapCanvas / OdMap / index.css.
+- **Entry points:** a header tab and Home's "See all on the map →".
+- **Verified in the browser** with 3 trips (idea / planned / completed) at desktop and 375 px, in
+  light and dark: colours match between rows and routes, country / when / search filters narrow
+  both the list and the map, a map dot or a row opens the trip, and back returns to My trips.
+- **Smoke test:** the new page's layout plus two flow checks (35 checks in all).
+- **Small follow-ups if wanted:** highlight a trip's route when hovering its row; remember filters
+  between visits.
+- **Map-led layout (2026-09-28, at Ryan's request):**
+  - **Like a trip's overview:** the globe is a full-bleed sticky backdrop filling the page, and the
+    title, counts and filters sit on a gradient over its bottom edge.
+  - **Scrolling:** the list rises over the map as you scroll, while the map dims and re-frames the
+    trips into the part still visible.
+  - **Wheel zoom:** scrolling up at the top zooms the map (wheelMode 'atTop').
+  - **No locations yet:** when no trip has a map location, the page keeps a plain layout instead of
+    an empty globe.
+- **Scroll-zoom on My trips goes straight out (2026-09-28).** MapCanvas `zoomOut` is `'home'`
+  (the default: a trip page glides back to the trip's framing as you zoom out) or `'straight'`
+  (My trips: zoom out around the current centre, stopping at the overview zoom). The smoke test
+  checks both behaviours with real wheel events, and a deliberate break was caught.
+- **Scroll lag fixed (2026-09-28).** My trips was re-framing the globe (cameraForBounds + jumpTo)
+  on every scroll frame, because its covered strip grew with scrollTop. That moved the map 49
+  times in one scroll sweep and made scrolling up into the scroll-to-zoom stutter. The strip is now
+  fixed at the title + filters (it only changes on resize); dimming still follows the scroll. A new
+  smoke check asserts the map doesn't move while the page scrolls, and it catches the old code.
+- **Same landing scale before the content scrolls (2026-09-28)**, on both My trips and trip pages.
+  - **The rule:** scrolling down at the top never moves the content until the map is back at its
+    landing scale — the landing zoom (My trips, keeping its centre) or the full landing framing (a
+    trip).
+  - **Handled cases:**
+    - zoomed in: it steps back out, as before;
+    - zoomed out past the landing view or dragged away: it eases back first;
+    - the content scrolled another way (scrollbar, keys): the map snaps back (catch-all).
+  - **Wheel handling moved** from the map container to the page's scroll area (capture), so
+    scrolls over the title, filters or list are gated too.
+  - **A drag-inertia bug fixed:** easeTo's interruption of a still-coasting drag fired an
+    immediate moveend that ended the return early.
+  - **Checks:** 3 new smoke checks (41 in all); removing the gate or the catch-all is caught.
+- **Landing size fixed for real (2026-09-28).** On the globe, MapLibre keeps the planet the same
+  apparent size across latitudes by shifting the zoom *number* (≈ log2 of the cosine ratio; seen
+  when a small drag changed zoom 6.861 → 6.840). My trips' straight zoom-out stopped at the
+  landing zoom number, so after zooming in at another latitude it came back too big (1.87× at
+  65°N vs a 39°N landing). The gate now uses the landing zoom at the current latitude
+  (`landingZoom`). A new smoke check compares the globe's on-screen size at the moment the content
+  starts scrolling with the landing view (±4%); it fails on the old code.
+
+---
+
+# Plan — Home page as a trip finder (#51a4c7)
+Date: 2026-09-29 · Status: Active
+
+**Direction (Ryan):** Home is about finding new trips.
+- **Top:** a centred prompt input.
+- **Below:** big, visual trip-suggestion panels that update with each prompt; any panel becomes a
+  proposal with "Make it a trip".
+- **Right:** "Trip qualities", everything specified so far (inferred from the prompts), plus
+  fields the traveler can set by hand (when, length, travelers, budget per traveler, pace, flying
+  from, vibe) and **options per prompt** (2–6, a saved setting).
+- **Also on Home:** a "Saved for later" row.
+- **Assistant:** hidden on Home, the chat transcript is secondary ("Show conversation" / History),
+  and the top option is a rich card while the others are compact and expand on click.
+
+**Model**, in pure `src/lib/tripFinder.js`:
+- **Qualities** `{ month, length, travelers, budget (per traveler), pace, from, vibe[], travel,
+  avoid[] }`. The AI returns what the conversation implies; manual fields override (and are marked
+  as set by you).
+- **Each prompt returns** `{ reply, qualities, trips: N × { title, summary, stops:[{city, country,
+  nights, lat, lng}], highlights[], cost:{low, high} per traveler, gettingThere, why, tags[] } }`,
+  validated and capped (`normalizeFinderReply`).
+- **Make it a trip:** `tripToProposal` gives segments with nights and coordinates, length,
+  interests, travelers, budget per traveler, pace, the home start, and notes from the summary and
+  highlights; the conversation is attached.
+- **Saved for later** reuses the ideas store: an idea can carry a full `trip` snapshot, and old
+  ideas still render in compact form.
+
+**Priced as today:** one chat turn (1 credit on managed AI) per prompt or "Update options".
+Photos (the existing image lookup) and weather (BI1 climate normals for the chosen month) are free
+and client-side. Cost ranges go through the shared price formatter (per traveler / trip total),
+which is a first step on the price-ranges item (#5738f9).
+
+### Build notes — 2026-09-29
+- Shipped as planned: centered prompt, N option cards (featured "Best fit" + compact cards with More), qualities panel with hand-set overrides (pinned, persisted in `tf.finder.manual.v1`), "Options per prompt" 2–6 (`settings.finderCount`), "Update options" when qualities/count change, Saved for later, "Make it a trip" → new proposal with the option's stops, nights and coords.
+- Side assistant hidden on Home; IdeasPage removed (its saved ideas live in "Saved for later").
+- Costs use the new `PriceRange` (per traveler / trip total aware) — groundwork for #5738f9.
+- Verified: 158 unit tests; smoke 45/45 incl. 4 finder steps with a mocked model (hand-set length + count reach the prompt; save; make-a-trip stops); real-model run; phone (dark) + desktop (light) screenshots.
+
+### Revision — 2026-09-29 (layout + persistence)
+- Full-width layout: options in the middle, laid out to fit one screen (3 across; 4 across on wide screens; 5–6 as two rows of slimmer cards); the right column holds trip qualities (compact one-line rows), the conversation, and saved for later.
+- "Options per prompt" moved under the chat bar.
+- The finder is a chat: the latest conversation (with each round's trip options) is restored on reload (App resumes `lastBrainstorm`); "New search" starts fresh. Earlier rounds' options can be viewed again from the conversation.
+- Smoke: reload keeps the chat + options; viewing an earlier round and back.
+
+### Revision — 2026-09-29 (design pass, frontend domain rules)
+- Register: Product (the tool disappears into the task; photos carry the personality).
+- Options: wide horizontal cards (photo left), two columns on xl; with an odd count the Best fit spans both. No image hover-zoom (motion rule).
+- Side panel: flush right, full height, one surface split by dividers (no floating cards):
+  trip qualities (only known values as rows; each marked "from the chat" or "pinned by you" with a pin toggle; unset fields as "+ Add" chips), the conversation (chat bubbles; each reply carries an "N options" round marker, the one on screen highlighted; auto-scrolls), saved for later as a disclosure.
+- Phones: "Trip qualities" / "Conversation" tabs above the options.
+- Detector clean on HomePage.jsx.
+
+### Revision — 2026-09-29 (side panel tabs + photo fix)
+- Side panel is one column with three tabs (Trip qualities · Conversation · Saved), with counts; the last tab is remembered. Phones use the same tabs, folded until tapped. Proper tablist semantics + arrow keys.
+- Missing trip photos — cause: a page of cards fires many Wikipedia lookups at once; Wikipedia answered some with 429 (rate limit), those fell back to Openverse, whose thumbnail proxy often returns 424, so the card showed a broken image. Fix in lib/images.js (shared by Home, Trip, City, My trips): Wikipedia lookups queue (≤2 in flight) and retry 429s with backoff; disambiguation pages skipped; "City, Country" title tried first (right Lagos); found photos cached in memory + localStorage (`tf.cityimg.v1`); Openverse uses the direct image URL; `imgFallback` swaps a failed thumbnail for the full image. Burst of 12 cities: 6 → 11 on Wikipedia, 0 broken. Test: tests/images.test.mjs (mutation-checked).
+
+## Stop order — 2026-09-29
+- Bug: asking Trip Fairy to add a stop "at the beginning" put it at the end. The segment `add` op always appended (`order: list.length`), and the model couldn't reorder in the same reply because it can't know the new stop's id. Fix: `add` on segment takes `position: 'start'|'end'|index` or `before`/`after` an existing segment id (an unknown id fails the whole reply rather than silently appending); the op protocol + a rule tell the model to use it.
+- One shared reorder in lib/trip.js (`reorderStops`, `moveStop`, `insertStop`, and `reverseStops` on top): activities keep their place within their stop (their global day shifts — previously a manual move left them on the old days), stops whose days changed lose per-stop arrive/depart, and an estimated leg between two swapped stops flips instead of being cleared and re-estimated. Used by the Trip page, the assistant's ops, and the fare optimizer's reversed route.
+- Manual reorder: stop cards on the Trip page are draggable (drop marker shows where it lands); the Edit-mode ‹ › buttons are larger (touch/keyboard path).
+- Tests: tests/stops.test.mjs (mutation-checked); smoke drags a stop there and back and checks the picked bus survives.
+
+### Fix — 2026-09-29: "(trip.destinations || []).join is not a function"
+- Cause: the assistant's `update field` op copied model values onto the record unchecked; a reply sent `destinations` as one string ("Lisbon, Porto"), which was saved, and every later chat on that trip crashed building its prompt (`tripToContext`).
+- Fix: list fields (`destinations`, `interests`) are coerced to string lists at the op boundary (lib/patch.js), and records already saved with text are repaired on load (migrate) and on cloud pull (sync). Test in tests/stops.test.mjs (mutation-checked).
+
+# Review — Trip AI harness: what the model gets each turn (#050346)
+Date: 2026-10-01 · Status: findings, awaiting decisions
+
+## Inventory
+| Call | Builder | Sent as | Contents |
+|---|---|---|---|
+| Trip chat (edit) | aiClient `buildEditPrompt` | 'prompt' (metered) | fixed instructions (op protocol + kind rules + flight-search rules) ‖ cache break ‖ `tripToContext` + weather normals + shortlist + segment/activity id lists + fare options (plans) + the WHOLE conversation (reply text only) |
+| Home finder | tripFinder `buildFinderPrompt` | 'chat' | qualities + pinned list + whole conversation + JSON schema |
+| Brainstorm (My trips rail) | aiClient `buildBrainstormPrompt` | 'chat' | instructions ‖ whole conversation |
+| Versions: draft / routes | drafts `buildDraftPrompt` / `buildRoutesPrompt` | 'prompt' | `tripToContext` + request |
+| Background (free) | derive/geo/shortlist/cautions/auditAi | 'background' / 'prompt' | per-task, capped at 12k chars (tests/promptSizes) |
+
+Measured (Iberia fixture: 5 stops, 25 activities, 4 legs, 12 messages): edit prompt ≈ 9.2k chars (~2.3k tokens) — fixed 3.7k (cached on Claude) + trip/chat 5.5k. Finder ≈ 2k.
+
+## Findings
+**Correctness (fix)**
+1. Travel legs are listed without ids, yet the protocol offers update/remove travel by id → those ops always fail, and (all-or-nothing) sink every other change in the reply. `origin`/`return` pseudo-ids appear only in a rule.
+2. The model never learns what happened to its proposed changes: the transcript carries reply text only, not whether the ops were applied, left unapplied, or failed (and why). It can claim "I added Madrid" after the traveler ignored or the app rejected it.
+3. No date anywhere: "next spring", "in 3 weeks", season advice and past-date checks are guesses.
+4. Detail the model can't see but may overwrite or contradict: stop lodging / notes / arrive–depart; activity time and notes; leg cost, booked vs estimated, flight number/times. (Fixture had lodging set — not in the prompt.)
+5. Field updates are type-unchecked beyond the list fix: travelers / rooms / lengthDays / budget can arrive as text ("2 people") — same bug class as the destinations crash.
+
+**Efficiency / clarity**
+6. Stops and activities are listed twice (context, then the id lists) — ~40% of the variable part. One listing with ids inline.
+7. "Destinations: (none specified)" shows while stops exist — contradicts the stop list. Only show destinations when there are no stops.
+8. The conversation is sent whole every turn, unbounded. Keep the last ~12 turns verbatim and say how many earlier ones were dropped (the trip state carries the result of those).
+9. The op protocol advertises plan-only fields (lodging, time, cost) to proposals, which their rules then forbid (the app strips them anyway) — mixed signals. Tailor the protocol line per kind.
+
+**Cleanup**
+10. `scoreIdeas` / `buildMatchPrompt` (derive.js) have no callers since the Ideas page went.
+
+## Recommendation
+Do 1–8 as one change (one shared context builder for the edit prompt, ids inline, date + outcome annotations, numeric coercion in patch, transcript cap), with tests on the prompt text; 9–10 alongside as they're small. Expected: variable part ≈ −35% on mid-size trips and the failure modes above gone.
+
+### Harness fixes — 2026-10-01 (all 10 findings, one change)
+- New `src/lib/context.js`: `tripToContext(trip, { ids, today })` (moved out of trip.js) lists the trip once — stops with lodging / notes / arrive–depart, activities nested under their stop with day / time / per-traveler cost / notes, travel legs with ids, stop-id ends ("origin"/"return" = home), flight details, per-traveler cost and estimate vs set-by-traveler — plus `Today:` (local date). Destinations only when there are no stops.
+- `transcriptText`: last 12 messages, a note for dropped ones, and after each reply what became of it: changes applied / NOT applied / FAILED (reason), trip options shown, flight results shown. Used by the trip chat, brainstorm and the Home finder (which also gets today's date).
+- Op protocol per kind: proposals no longer see dates/status/lodging/activity day-time-cost/travel ops; a rule tells the model to check outcomes before saying a change was made, and that numbers are numbers.
+- patch.js: whole-number fields (travelers, rooms, lengthDays, nights, day, durationMinutes) coerced; unparseable ones dropped rather than stored as text.
+- Removed dead `scoreIdeas` / `buildMatchPrompt` / `prefsKey` / `prefsFromContext` / `deriveTransport`.
+- Size (Iberia fixture): trip+chat 5.5k → 5.3k chars while carrying far more; proposal instructions 3.5k → 3.0k; plan instructions 3.7k → 3.9k (cached). Long chats now stop growing past 12 messages.
+- Tests: tests/harness.test.mjs (7, mutation-checked); smoke mock keys on the new prompt header.
+
+# Plan — Fluid trips, place + base stops, anchors (#af9be2, #1858f1)
+Date: 2026-10-01 · Status: Draft · Brainstorm: docs/brainstorm.md 2026-10-01
+
+## Milestones
+| # | Milestone | Description | Dependencies |
+|---|---|---|---|
+| FT1 | One fluid trip | Drop proposal/plan field gating (dates, status, travel, lodging, activity day/time/cost allowed on any version); date finder + Flights on any version; derived stage chip (idea · shaped · dated · booked · done) replaces Proposal/Plan labels; "Create plan" → optional "New version" (copy); root + versions are peers with a `mainVersionId` (default: today's lead version); one stage-aware AI prompt ("don't invent dates/bookings unless asked") instead of proposal/plan prompts; Versions/My trips/top bar read "versions". No data rewrite. | — |
+| FT2 | Place + base stops | Segment gains `placeType` (city · park · region · event), optional `base` { name, lat, lng } (where you sleep) and 0-night day stops. Day math: a 0-night stop shares its day with the next stop. Trip page: "sleeping in X", "day stop"; shared bases grouped; map shows base (bed) pins when they differ from the place. Budget lodging counts nights at the base. AI: ops + context carry base/placeType/0 nights; finder/drafts may return bases. Mighty 5 fixture in tests + smoke. | FT1 (lodging no longer plan-only) |
+| FT3 | Fixed-date anchors | Activities (and stops via arrive/depart) can be pinned: `anchor: { date, time? }`. Anchors show as pinned; with no trip dates, an anchor implies them (start = anchor date − its day + 1); the date finder only offers windows containing every anchor; AI context marks FIXED items and is told never to move them. | FT1 |
+
+## Decisions Log
+| Decision | Choice | Reasoning | Date |
+|---|---|---|---|
+| Lifecycle | One fluid trip, versions as peers | Hard fork blocked early dates/lodging and split chats; record shapes were already shared | 2026-10-01 |
+| Event trips | Place + optional base, 0-night stops | Smallest change; city trips unchanged; fixes Mighty 5 | 2026-10-01 |
+| Anchors | Yes, pin activities/stops to dates | Festivals/games/weddings drive the whole trip's dates | 2026-10-01 |
+| Migration | None (kind kept in data, ignored by UI) | Same shape already; avoids a risky rewrite of synced data | 2026-10-01 |
+
+### FT1 built — 2026-10-01
+- `src/lib/versions.js`: `tripStage` (idea · shaped · dated · booked · done; booked/done from the traveler's status or a past end date), `versionName` (root = "Original"), `mainVersion` (root.mainVersionId, else furthest along, then most recent), `nextVersionName`, `newVersion` (full copy of any version with fresh stop/activity/leg ids, references remapped). Stored `kind` stays ('proposal' = root, 'plan' = version) — no data rewrite.
+- Removed the gating: `PLAN_ONLY_FIELDS` / `SEGMENT_PLAN_FIELDS` / `ACTIVITY_PLAN_FIELDS` / `SHARED_FIELDS` and the proposal strip in patch.js; lib/escalate.js deleted (`draftToPlan` → `draftToVersion` on top of `newVersion`); stays mirror into lodging on any version; audit's dates/late-activity checks run on any version.
+- UI: trip bar shows versions as peers with a stage dot and "+ Version" (copies the version you're on); opening a trip lands on its main version; Flights, the dates pill and the date finder work on every version; the Trip page header shows version · stage; the trip editor shows dates, lodging, legs and activity day/time/cost everywhere with a "Booking" select (still planning · booked · done); Versions shows each card's stage, a Main badge and "Make main", and "Keep as version"; My trips filters by stage.
+- AI: one instruction set for every version (no proposal/plan prompts), with "Stage:" in the trip context and a rule not to invent dates/bookings before there are dates unless asked; flight search on any version.
+- Tests: tests/versions.test.mjs + updated myTrips/drafts/shortlist/fareStore/harness; smoke adds two fluid-trip steps (49/49).
+
+### FT2 built — 2026-10-01
+- Stops gain `placeType` (city · park · region · event) and `base` { name, lat, lng } — where you sleep when it isn't the place (`normalizeBase`, `sleepsIn`, `stopShape` in lib/trip.js). 0 nights = a day stop: it takes no days of its own and shares its day with the next stop (`segmentDayRanges`); `segmentForDay` gives a shared day to the overnight stop.
+- Trip page: park/region/event icon on the stop card, "Day stop", "Sleep in <base>"; one bed pin per base town on the map (shared bases → one pin); bases geocoded like stops (`geocodeBases`: Nominatim, then the AI; deduped by town).
+- Editing: stop rows in the editor and the city page's stop details have "Kind of place" and "Sleeping in"; nights can be 0.
+- AI: the trip context lists place type, day stops and "sleeping in"; the op protocol takes `placeType` and `base` (a town name; same name keeps coords, "" clears); a rule explains places vs bases and 0-night stops. The finder and drafts may return bases, place types and day stops; city briefings suggest stays in the base town (none for a day stop).
+- Tests: tests/places.test.mjs (Mighty 5; mutation-checked); smoke adds a Mighty 5 trip (day stop, "Sleep in", 2 bed pins for 3 based stops) — 50/50.
+- Known, not FT2: a trip with no dates and no length shows "? days" rather than summing nights.
+
+### FT3 built — 2026-10-01
+- `src/lib/anchors.js`: `anchor: { date, time }` on activities and stops. `anchorWindow` intersects what each anchor allows for the start date (a stop: date − (its first day − 1); an activity with a day: date − (day − 1); an activity without a day: within its stop, or the trip) → { earliest, latest, exact, conflict }. `syncAnchors` applies it: an exact window sets an undated trip's dates (length from dates / lengthDays / nights), and on a dated trip anchored activities land on their day. Runs after every assistant reply (applyOps), manual edit and date lock.
+- The date finder opens its window where anchors allow, greys out (can't lock) departures that leave one out, and says what's fixed; the Flights page's date options skip those departures. The trip check flags anchors that conflict or fall outside the dates.
+- UI: "Fixed date" on activities (trip editor) and stops (city page stop details, "there from"); a pin + date on anchored activities in the itinerary and "Fixed · <date>" on stop cards.
+- AI: anchored items read "FIXED: …" in the trip context, plus when the trip must start; the protocol takes "anchor":{"date","time"} / null; a rule says never move them or set dates that leave them out.
+- Fixed a day-arithmetic bug before it shipped (noon-UTC day numbers rounded a day late).
+- Tests: tests/anchors.test.mjs (7, mutation-checked); smoke pins Porto to Dec 5 on the undated original → Dec 1–8 — 51/51.
+
+### FT1 follow-up — 2026-10-01: folding old proposal → plan forks
+- `collapseForks` (lib/versions.js): a root with no dates + a version still auto-named "Plan N" with the same stops in the same order, where the root has no activity the version lacks, folds into one record — the root keeps id / title / createdAt / drafts (re-pointed) / chats, takes the version's content (stop/activity/leg references intact; city caches the version lacked come from the root's same stop); the version is tombstoned so every device drops it, and its conversations move to the trip (`moveTripChats`). Anything else stays a version. Idempotent; runs on load (App) and in the sync merge (pullMerge), and a selection on a folded version moves to its trip.
+- Against the saved trips (read-only check, 2026-10-01): Utah's Mighty Five (Plan 1, dated, shorter nights) → one trip; Greece 10-Day Getaway (Plan 1) → one trip; Western Balkans (Plan 2 folds; Plan 1 via Tirana stays a version); Japan Ski Trip unchanged (named alternative); single trips unchanged.
+- Tests: versions.test.mjs (fold + what stays), chats.test.mjs (chats move); smoke: an old fork folds on load, a named version stays — 52/52.
+
+## Trip map layers — 2026-10-01 (#842d31)
+- `src/lib/mapLayers.js`: places to stay / things to do / food & drink from each stop's page (segment.detail.pois with coordinates; none for stays on a day stop) as map markers per layer, with the traveler's picks (their stay, their list) marked; "Only what I picked"; counts per layer; the choice remembered per browser (`tf.tripmap.layers.v1`).
+- `MapLayersControl` in the trip map's control column (stack icon → panel). Layer markers are `fit:false` + `draggable:false`: MapCanvas frames the trip on its own markers and no longer re-frames when only those change, so a zoomed-in view stays put while layers switch.
+- Picked places get a filled pin (CSS `.tf-mk--picked`).
+- Also: `plannedDays` (dates → length → nights) for "Dates open · N days" and the trip header — no more "? days" on trips without a length; anchors use it too.
+- Tests: tests/mapLayers.test.mjs; smoke: switching "Places to stay" shows both stays, the pick stands out, the camera doesn't move — 53/53.
+- Not in this change: activities as a layer (they have no coordinates of their own yet).
+
+### Small items — 2026-10-01
+- City maps (#81665b): a plain scroll over a city map zooms it (`wheelMode="always"`); touch screens keep one-finger page scrolling ('cooperative').
+- Trip map — your activities: an activity named like a place on a stop's page borrows its location (its own stop first) and shows as "Your activities", on by default; the place doesn't show twice. Hand-typed activities with no matching place aren't mapped yet (real locations come with DATA-R1).
+- My trips globe (#50fa0f): each trip's name as a pill in its colour over the middle of its route, a link to the trip; pills that would overlap another hide until you zoom in; far-side ones fade with the globe.
+- Data-source work tabled as DATA-R1 / R2 / R3 (#c6996a, #edfda3, #1dba4c).
+- Tests: mapLayers + myTrips; smoke: trip names visible and open the trip, city map zooms without scrolling the page — 55/55.
+
+## Plan — Trip Fairy loading animations (#b2d6f3)
+
+**Concept.** Build the loader from the brand mark itself (`TripFairyMark`, components/Brand.jsx)
+rather than a generic spinner: the mark bobs gently (±3px, 2.2s ease-in-out loop) while three small
+sparkles orbit it (3.6s linear) and twinkle on staggered delays (opacity + scale, 1.8s ease-in-out).
+Transform/opacity only, per motion rules. No bounce/elastic — the bob and orbit are continuous
+loops, not entrances, so they stay on a plain ease-in-out rather than an ease-out-expo (which
+reads as a one-shot settle, wrong for something that repeats forever).
+
+**Component — `src/components/FairyLoader.jsx`.**
+`<FairyLoader variant="inline" | "block" | "typing" size label lines className />`
+- `inline`: icon only (`role="status" aria-label={label}`), sized to sit next to the caller's own
+  visible text or inside a button in place of an icon.
+- `typing`: icon + its own text in a row — the "assistant is replying" bubble shape.
+- `block`: icon + text, centered, padded — a self-contained empty-panel state.
+- `lines`: optional array of short status strings the loader rotates through every 2.2s (pure
+  selection logic in `src/lib/loaderLines.js::pickStatusLine`, unit-tested). Only used where the
+  wait is genuinely open-ended (an AI call) and only with generic-but-honest lines ("Weighing a few
+  options…", "Almost there…") — never a line that claims a specific step isn't actually happening.
+  Falls back to `label` when omitted or when there's only one line.
+- Reduced motion: `@media (prefers-reduced-motion: reduce)` in index.css drops all three keyframe
+  animations; the mark sits still and the sparkles hold at a fixed low opacity (no flashing, still
+  reads as "something is happening" without motion).
+
+**Loading spots changed** (grep for `loading`/`busy`/`animate-spin`/`animate-pulse`/the old copy
+found these; each got the loader judged by role):
+- `AssistantRail.jsx` — "Thinking…" dot replaced with `variant="typing"`, rotating lines.
+- `HomePage.jsx` (Home trip finder) — the history list's busy row, the phone-panel busy line, the
+  empty trip-options panel (now `variant="block"`), and the send button's spinner (now
+  `variant="inline"`) all switched; all open-ended AI waits use the same rotating lines.
+- `VersionsPage.jsx` — "Draft it" and "Other ways to do this trip" buttons swap their icon for
+  `variant="inline"` while busy (kept their existing "Drafting…" / "Finding other routes…" copy).
+- `CityPage.jsx` — the city-briefing loading row switched to `variant="typing"` with rotating lines.
+- `TripAudit.jsx` / `GoodToKnow.jsx` — the two "AI check" buttons (`aiBusy`) swap `CircleNotch` for
+  `variant="inline"` for brand consistency. Left as-is: the audit's per-issue "fix" buttons
+  (`CircleNotch`, local patch apply, not an AI wait) and DateFinder's fare-pricing skeleton bars —
+  those are genuine content skeletons (interaction-design rule: skeletons for content loading, not
+  center-screen spinners), so a mark animation there would be the wrong vocabulary, not an upgrade.
+
+**Motion/reduced-motion rules applied:** `transform`/`opacity` only; no layout properties; ease
+in/out, no elastic; every animation has a reduced-motion stop (index.css, near `.fairy-loader__*`);
+loader never gates content visibility — it only ever shows *while* `busy`/`loading` is true and the
+content it describes is absent, same as the copy it replaces.
+
+### Built — 2026-10-02
+- `src/components/FairyLoader.jsx` (`inline` / `block` / `typing`) + `src/lib/loaderLines.js`
+  (`pickStatusLine`, unit-tested in `tests/loaderLines.test.mjs`) + keyframes in `src/index.css`
+  (`.fairy-loader__mark` bob, `.fairy-loader__orbit` rotation, `.fairy-loader__sparkle` twinkle;
+  reduced-motion block freezes all three).
+- Wired into: `AssistantRail.jsx` (Thinking…), `HomePage.jsx` (finder history row, phone busy line,
+  empty trip-options panel, send-button spinner), `VersionsPage.jsx` (Draft it / Other ways to do
+  this trip button icons), `CityPage.jsx` (briefing loading row), `TripAudit.jsx` + `GoodToKnow.jsx`
+  (AI-check button icons). DateFinder's fare skeleton bars and the audit's per-issue fix spinners
+  were left alone — they're content skeletons / local patch-applies, not AI waits.
+- Tests: `tests/loaderLines.test.mjs` (2 cases); full suite 198/198. `npm run build` passes (pre-
+  existing chunk-size warning only, unrelated).
+- Smoke: added "home: the fairy loader shows while finding trips, then clears" (asserts
+  `role=status` appears then disappears around the Home finder call, using a one-time 600ms delay
+  on the mocked `/ai/plan` finder request) — 56/56.
+- Visual check (playwright-cli, mocked `/ai/plan` with an artificial delay): desktop dark (inline
+  send-button loader + block empty-panel loader, rotating status line), desktop dark with
+  `prefers-reduced-motion: reduce` (mark and orbit frozen, sparkles held at fixed opacity, text
+  still rotates), and mobile (390x844) forced light theme (both the phone-panel typing-style line
+  and the block panel, accent-colored mark reads fine on the light surface). AssistantRail's and
+  CityPage's `typing` variant render through the same `Mark`/`Sparkles` code path validated above,
+  not screenshotted separately.
+- Not done: no rotating lines on the lightweight button-icon spots (Versions draft/routes, audit/
+  GoodToKnow checks) — those waits are short enough that a static icon swap reads better than text
+  that might not finish a cycle.
+
+# Plan — On-trip section: calendar + packing (#a34d09)
+Date: 2026-10-02 · Status: Built · Branch: feat/on-trip-calendar-packing
+
+## Goals
+Give a trip a day-by-day calendar (whole trip / a range of days / one day at a
+time) and a packing list seeded from the trip itself — both reading the
+existing record (stops, bases, day stops, travel, activities, anchors,
+climate normals) so they're correct the moment a trip has stops, no extra
+data entry.
+
+## Scope
+- Calendar: a pure schedule builder (no AI) over `segments`/`travel`/
+  `activities`; dated trips show real dates, undated trips show day numbers;
+  a day stop sharing its day with the next overnight stop shows both ("Day
+  stop: X — sleeping in Y"); travel legs land on the day they happen
+  (arrival day, except the trip's final leg home which lands on the last
+  stop's last day); activities sort by time; anchored activities show their
+  pin; activities with no day yet are listed separately, not dropped.
+- Packing: a deterministic generator (no AI) — essentials, clothing scaled to
+  trip length (capped at a week — laundry) and traveler count, gear from
+  place types (park → hiking gear) / activity categories (outdoor, nightlife,
+  paid food → dinner outfit) / interests (beach, ski), and a weather pass
+  from the climate normals (lib/climate.js) for the trip's month (cold →
+  layers, hot → sunscreen, rainy → rain jacket). Saved as `record.packing`
+  (new, additive, nullable field — no schema bump) so checks/custom items
+  sync like everything else; "Refresh suggestions" only adds what's missing,
+  never touches what the traveler already checked, unchecked, or added.
+- Both read live record data — no placeholders — and respect the app's
+  existing tokens/themes/reduced-motion (reused `.card`/`.field`/`.tab`/`.chip`
+  classes, no new CSS).
+
+## Data model changes
+- `record.packing?: PackingItem[]` — `{ id, name, category, reason, quantity?,
+  checked, custom? }`. Additive/nullable like `weather`/`drafts`/`image`
+  before it — no `SCHEMA_VERSION` bump, no migration.
+- No other fields changed; the calendar is entirely derived (no stored shape).
+
+## UI layout
+- `lib/onTrip.js`: `scheduleDays(trip)` → one entry per trip day; `unscheduledActivities(trip)`.
+- `lib/packing.js`: `generatePacking(trip, normalsBySeg)` (pure) + `mergePacking(existing, generated)`.
+- `pages/CalendarPage.jsx`: "Whole trip" (with a from/to day range filter) vs
+  "Day by day" (prev/next through one day at a time) tabs; a day card shows
+  where you are, where you sleep, travel, and activities.
+- `pages/PackingPage.jsx`: items grouped by category with checkboxes, reasons,
+  remove, add-a-item, and "Refresh suggestions"; auto-generates once on first
+  visit (`onPatch`, like the weather cache — not a user edit); toggling/adding/
+  removing go through `onChange` (undoable, like any other trip edit).
+- Trip bar (`Shell.jsx`): a 5th/6th top-level tab overflowed the 375px budget
+  (the CSS comment already flagged "five section tabs must fit"), so Calendar
+  + Packing are one "On the trip" dropdown (icon-only on phones, same pattern
+  as the Cities menu) rather than two more tabs.
+
+## Milestones
+| # | Milestone | Description |
+|---|---|---|
+| CAL1 | Day-by-day schedule builder | `lib/onTrip.js`, pure, dated + undated, day stops, travel-day placement, anchors |
+| CAL2 | Calendar page | Whole trip / range / single day, phone-friendly |
+| PACK1 | Packing generator | `lib/packing.js`, pure, essentials/clothing/gear/weather, mutation-checked |
+| PACK2 | Packing page | Persisted on `record.packing`, checkbox/add/remove/refresh |
+
+## Built — 2026-10-02
+- `src/lib/onTrip.js`, `src/lib/packing.js`, `src/pages/CalendarPage.jsx`, `src/pages/PackingPage.jsx`; wired into `App.jsx` (`calendar`/`packing` pages) and `Shell.jsx` (On the trip menu).
+- Tests: `tests/onTrip.test.mjs` (11 — schedule dated/undated/day-stops/travel-days/unscheduled activities, packing hiking/clothing-scale/climate/merge), each mutation-checked against the logic it covers. Full suite 207/207.
+- Build: `npm run build` clean.
+- Smoke: `scripts/smoke/smoke.js` — Calendar + Packing added to the per-page layout sweep (phone + desktop) and three feature steps (whole-trip schedule + the Dec 3 dinner, day-by-day stepping, a packing toggle surviving reload). 62/62. Screenshots checked manually (desktop 1280 + phone 375, dark + light) — layout and both themes read cleanly.
+- Not built: the optional "Suggest more with Trip Fairy" AI pass on packing (spec said optional, kept out to keep the generator small and fully deterministic/testable).
+
+### Fix — 2026-10-04: lapsed Claude Code sign-in ("Your Claude Code" engine)
+- Symptom: chat replied "Failed to authenticate: OAuth session expired and could not be refreshed" — the helper's `claude -p` had an expired CLI login.
+- Helper core (`packages/helper/lib/core.mjs`, used by `npm run ai` and the npm package): failures that look like login trouble (`isLoginError`) become a 503 `{ code: 'claude_login' }` with "Your Claude Code needs you to sign in again: open a terminal, run `claude`, then type /login. Or use Trip Fairy's AI for now."
+- App (`aiClient.callHelper`) → typed error `helper_login`; the assistant rail and the Home finder show a "Use Trip Fairy's AI instead" button (switches `aiEngine` to 'auto'). Other screens show the clear message.
+- Helper package bumped to 0.1.2 (the user publishes to npm with 2FA). Tests: tests/helperLogin.test.mjs (fake `claude` on PATH; mutation-checked).
+
+### Polish — 2026-10-04: calendar, packing, map names
+- Calendar is a real calendar now: a Sun–Sat grid over the trip's weeks (rows of Day 1–7 without dates), each day with its stop as a coloured band (named where a stop's run starts / a week starts), travel, the first two activities and "+N more"; out-of-trip days dimmed; phones show bands + dots. Pick a day → the day panel (prev/next). "List" view: an agenda grouped by stop. `calendarWeeks` in lib/onTrip.js (tested).
+- Packing: an always-visible "Add items" box that takes a typed list ("sunglasses, 2 wool socks, phone charger"), previews how it read it, and files each item by a best guess (`parseQuickAdd`, `guessCategory` in lib/packing.js; tested) or a chosen category; "Add to <category>" inside each group; − / + counts; progress bar; Hide packed. An item already on the list gets its count updated instead of a duplicate.
+- Trip map: "Road & place names" in the map layers panel — hidden-by-default detail labels in the map style (road names/numbers, villages/suburbs/hamlets, towns from regional zoom, airports with codes, peaks with elevation, park names), toggled by `setDetailLabels`; trip stops still win label collisions.
+- Smoke 67/67 (calendar grid + day panel + list, packing typed list + per-category add, the names toggle); 215 unit tests.
+
+- 2026-10-04: the map toggle is called "More labels" (hint: roads, towns, parks, airports) — "Road & place names" read oddly.
+- 2026-10-04: "More labels" is on every map now — one shared, remembered setting (`lib/mapPrefs.js` `useMoreLabels`, live across open maps; carries over the old trip-map choice). OdMap shows a toggle button (signpost) in its controls on the city maps, My trips and expanded views; the trip map keeps it in its layers panel (`labelsToggle={false}`). Smoke 68/68.
+
+## Plan — Price ranges for flights & transport (#5738f9)
+- Problem: AI-estimated legs show one confident number ("$30 pp") for what is really a spread. Real fares (Ignav live, chosen/booked flights) are exact and must stay so.
+- Data: estimated legs and their `options[]` gain `costLow`/`costHigh` (per person, USD, integers). `cost` stays and becomes the midpoint when a valid range exists — the budget, audit, fare optimizer and older readers keep one number. Legs/options without a range (older data, hand-typed) render exactly as before.
+- Validation (`normRange`/`normOption` in lib/derive.js): swap inverted ends; drop the range if an end is missing, non-positive or the spread is > 10x (keep `cost` as given).
+- Where a range is legal (`estimateRange` in lib/legOptions.js): only when the leg/option is not live, not chosen, not a real flight and `derived !== false`. Live fare (`withLiveFare`), picking a snapshot flight, and hand-editing the cost (TripEditor) all clear the range.
+- UI: Getting-around row and option chips use `PriceRange` (per-traveler / total mode honoured, `short` form with full text in the tooltip); "est" label unchanged. Live/booked prices keep `Price` and no "est".
+- AI context (`tripToContext`): `~30–50 USD pp · estimate` for ranged estimates.
+- Budget decision: unchanged — uses `cost` (the midpoint). A low/high budget band would be a separate feature.
+- Flights page spread of results: not built (see built notes).
+- Tests: tests/priceRanges.test.mjs; smoke: range/older/live steps.
+
+### Built — 2026-10-04 (#5738f9)
+- Branch `feat/travel-price-ranges`. Prompt asks for `costLow`/`costHigh`; `normOption` validates; `pickLegOption`/`currentAsOption`/`withLiveFare` carry or clear ranges; TripPage threads them when creating legs; TripEditor clears them on a manual cost.
+- Shown on the Trip page "Getting around" rows and the options chips; context lists them for the chat. Not shown on other pages because no other page displays estimated leg prices (Home finder cards already used `priceRangeLines`).
+- Not built: Flights-page "cheapest–typical" spread — the search returns few itineraries and a spread of 2-3 offers reads as false precision next to the exact list already shown.
+- Tests: 223/223 (8 new, mutation-checked: inversion swap, live clears range, `estimateRange` real-fare guard, context range). Build clean. Smoke 70/70 (range on an estimated leg and flight, older cost-only leg unchanged, live fare single and unlabelled; "$30 pp" assertion became "$25–35 pp", total-mode assertion now the range × 2). Screenshots of Getting around at 1280 and 375 checked.
+
+
+## Plan — Packing: Suggest more with Trip Fairy (#b9506f)
+- Goal: a user-initiated "Suggest more with Trip Fairy" on the packing page. It asks the model only for trip-specific items NOT already on the list; the traveler picks (add one / add all / dismiss). Nothing is added automatically.
+- Pure functions in `lib/packing.js`: `buildSuggestPrompt(trip, items, {normals})` (trip context via `tripToContext`, climate normals text, current list names) and `normalizeSuggestions(parsed, items)` (unknown category -> `guessCategory`, drops items already on the list or repeated, trims lengths, quantity 2-20 or null, caps at 10, bad JSON -> `[]`). `suggestPacking(...)` wraps `askPrompt` (priced as a credit on managed AI, like cautions) - no change to `aiClient.js`.
+- Reply shape: `{ "items": [ { "name", "category", "reason", "quantity"? } ] }`, strict JSON.
+- Calls: `askPrompt`, because it is user-initiated and costs a credit on managed AI.
+- Marking: added items carry `source: 'ai'` (reason stays the model's plain reason); the list shows a small sparkle on them. Added through the same `addItems` path (dedupe by name, count bump).
+- UI: button in the header next to Refresh; a panel above the list with FairyLoader while waiting, rows with Add, an "Add all" and "Dismiss"; errors with the same call-to-action as Home (`needs_credits` -> Get credits, `needs_auth`/`needs_account` -> Sign in, `helper_login` -> Use Trip Fairy's AI). Added rows leave the panel.
+- App.jsx: PackingPage gets `settings`, `aiAvailable`, `onNeedCredits`, `onNeedAuth` (one-line edit).
+- Tests: tests/packingSuggest.test.mjs; smoke step with a canned `/ai/plan` branch.
+
+### Built — 2026-10-04: Packing: Suggest more with Trip Fairy (#b9506f)
+- `lib/packing.js`: `buildSuggestPrompt`, `normalizeSuggestions`, `suggestPacking` (via `askPrompt`; `aiClient.js` untouched). `PackingPage.jsx`: header button, suggestions panel (Add / Add all / Dismiss, FairyLoader, error CTAs as on Home), sparkle on items with `source: 'ai'`. `App.jsx`: one line passing `settings`, `aiAvailable`, `onNeedCredits`, `onNeedAuth`, `onSettings`.
+- Decisions: marking is a `source: 'ai'` field (reason stays plain, so it reads naturally); suggestions use `addItems` (dedupe by name, count bump), saved as custom items and undoable; button disabled when AI is unavailable; empty reply shows "Nothing new to suggest"; a failed call keeps the list untouched. Dedupe compares names ignoring case/punctuation (not plurals - ceiling: a fuzzy match would be the upgrade).
+- Tests: `tests/packingSuggest.test.mjs` (6; cap, dedupe, category fallback, list-in-prompt, weather-in-prompt mutation-checked). Suite 221/221. Build clean.
+- Smoke 69/69 (new step: nothing added before a click, add one lands in its category and leaves the panel, add all, quantity kept, prompt carries list + place + weather). Screenshots checked at 1280 + 375, dark + light; fixed the phone header buttons overflowing (now wrap).
+
+
+## Plan — Clear conversation / start fresh (#cfe01e)
+**Goal.** One obvious, consistent way to start over wherever there is a conversation, with nothing lost by accident.
+
+**Decisions**
+- **Pattern: Undo toast, not a confirm dialog.** Starting over is cheap and reversible (the old conversation is only set aside), so a blocking confirm is friction. A bottom-centre toast ("Search cleared" / "Chat cleared. Find it in History.", with an "Undo" button, 8 s) is used everywhere. One shared store + component (`lib/undoToast.js`, `components/UndoToast.jsx`), mounted once in App.
+- **One label: "Start over"** (verb + object implied by context; the title says what it clears). Home's "Start a new search" and the rail's "New chat" are both replaced, so there is a single vocabulary. Merging "New search" into it is deliberate: the old split (new search keeps hand-set qualities) was invisible and surprising; "Unpin all" in the qualities tab still clears pins alone.
+- **Home "Start over"** clears the current conversation, its trip options and the hand-set qualities (`tf.finder.manual.v1`). Undo restores all three (same conversation id, messages, model, pins). Shown whenever there is a conversation or any pinned quality, in the prompt's options row (visible on phones too).
+- **Rail "Start over"** (trip/city/flights/versions pages) = `newChat`: the old conversation stays in History; Undo continues it again. New pure helper `startOver(tripId)` in `lib/chats.js` returns an undo function (or null when there is nothing to clear); unit-tested.
+- Never touched: saved-for-later ideas, trips, History entries (only the traveler's explicit delete removes those).
+- Touch targets >= 44px on the toast's Undo; visible focus rings; `role="status"`; toast replaces any earlier one.
+
+**Files.** `src/lib/chats.js`, `src/lib/undoToast.js`, `src/components/UndoToast.jsx`, `src/components/AssistantRail.jsx`, `src/pages/HomePage.jsx`, `src/App.jsx` (small), `tests/chats.test.mjs`, `scripts/smoke/smoke.js`.
+
+### Built — 2026-10-04 (#cfe01e)
+- `lib/undoToast.js` + `components/UndoToast.jsx` (one toast, 8 s, `role="status"`, 44px Undo, mounted once in App; centred with a wrapper because `.animate-rise`'s fill-forwards transform cancels `-translate-x-1/2`, which the existing "Trip Fairy updated" toast also trips over, not touched here).
+- Home: "Start over" (Eraser icon) in the prompt's options row, on phones and desktop; shown when there is a conversation or a pinned quality. Clears the conversation, options and pins; Undo restores all three (same session id, so no duplicate in History). Replaces "Start a new search". Saved ideas untouched.
+- Rail: "New chat" renamed "Start over"; `startOver(tripId)` in `lib/chats.js` returns an undo; the old conversation stays in History, Undo continues it again. Rail on My trips uses App's `newBrainstorm`, now returning an undo too.
+- Tests: `startOver` unit test (216/216). Build clean. Smoke 70/70 (+Home start over/undo, +rail start over/History/undo). Screenshots checked: Home phone before/after (toast), Home desktop after Undo, rail desktop with toast. Toast copy shortened after the phone shot showed it truncating.
+- Not done: no phone-width rail screenshot (the drawer is not reached by the smoke path); Home "Start over" is small text beside the option count by design (quiet, undoable).
+
+## Profile info — username + picture (2026-10-04, #382202)
+
+- `supabase/migrations/0010_profiles.sql` (not yet applied): `public.profiles` (user_id pk → auth.users, username, avatar_path, updated_at); unique index on `lower(username)`; check `^[A-Za-z0-9_.]{3,24}$`; RLS: any authenticated user can read, only the owner can insert/update. Public-read `avatars` bucket (1 MB, webp/jpeg/png) with storage policies limiting writes to the `<uid>/` folder.
+- `src/lib/profile.js`: pure validators (username, avatar file, square crop, initials) + a small store (`subscribe`/`getProfile`) so the header menu and Settings stay in sync. Avatars are center-cropped to 256×256 WebP (JPEG fallback) via canvas, uploaded to `<uid>/avatar-<ts>.webp`, the old file deleted best-effort. Originals over 5 MB or non-images are rejected before decoding.
+- `src/components/Avatar.jsx`: reusable `<Avatar profile email size>` (image, or initials if none / load fails) and `useProfile(session)`. Used by the Account menu (avatar button, username + email, "Edit profile") and Settings → Account & credits (Profile section; saves immediately, inline validation, "taken" from the unique index).
+- Guests get no profile UI. Without 0010 applied, a failed profile read resolves to null and the UI shows email/initials; saves show a generic error.
+
+## City page layout: the map stays in view (#8e0756) — 2026-10-04
+
+**Decision.** One map per city page, never scrolled away. The map moved out of the hero / Overview body and is shared by every tab (Overview, Things to do, Places to stay, Food), showing the active tab's located places (all kinds on Overview) plus the stop itself.
+- **Wide (page area >= 880px, measured on `<main>`, so the assistant rail counts):** two columns. Left: back, hero (photo, or just the name when there is none), tabs, content. Right: a sticky map (`top-6`, height = `--main-h` - 48px, measured the way TripPage does), so it fills the viewport and never scrolls off. The Overview's side cards stack under the text in this layout.
+- **Narrow / phone:** the tabs row is sticky (`top-0`), with a collapsible "Map · N places" bar and a 150px map strip under it (open by default, Hide / Show, `aria-expanded`; collapsed it unmounts). The strip uses cooperative gestures, so a finger or wheel over it scrolls the page. The map's own expand button still gives the full-screen map.
+- **Interactions (shared state in CityPage):** hovering or keyboard-focusing a card sets `hoverId` -> marker `is-hover` (ring + label). Clicking a card, or its "Show on map" button (keyboard path), sets the selection -> marker `is-active`, centred (`centerFocus`) and pulsed (`is-pulse`, only without reduced motion; the pan is instant under reduced motion). Clicking a marker selects its card and scrolls it into view (`scroll-margin` clears the sticky block on phones); from the Overview it opens the place's tab. A marker whose card is hidden by chip filters clears them. The selection clears on a tab change. Picked stays / list items keep `tf-mk--picked`.
+- **Code:** `cityMarkers()` in `lib/mapLayers.js` (pure, tested); MapCanvas gets `hoverId` / `focusTick` / `centerFocus` and a marker `actionLabel` ("Show X" instead of "Open X"); PlaceList gets hover / select props. Marker popups on this page are gone (markers are buttons now); the cards carry the same Map / Street View links.
+- **Not changed:** briefing, Quick facts, Practical, Money, weather, Getting around, add-to-list, pick stay, swap / more, explore links, Edit (stop details + all list editing), refresh / stale banner, drag-to-correct pins, "More labels", expand map.
+- **Checked:** smoke covers the map beside each tab with its marker count, picked style, hover / focus / click / marker-click classes and attributes, filter clearing, and the phone strip collapsing under sticky tabs. Known limit: the filter chips hide cards but not their markers.
+
+- Repo renamed on GitHub: ryanchristopher27/trip-planner -> ryanchristopher27/trip-fairy (2026-10-04, tracker #70bfba). Local folder unchanged. Helper package.json repository URL updated; ships with next helper release.
+
+## Profile stats (2026-10-04, #958e19)
+
+- `src/lib/stats.js` (pure, tested in `tests/stats.test.mjs`): `tripStats(records, {tombstones})` groups with `buildTrips`, so a trip counts once by its main version; tombstoned trips are excluded. Gives trips made, trips taken (main version stage `done`), upcoming (dated/booked, starts today or later), countries and cities from taken trips' stops, nights away (dates, else stop nights), straight-line distance (home -> stops -> home, home only when it has coordinates; `haversineKm`) and the longest trip. `usageStats(rows)` turns `usage_events` rows into messages (prompt / new_proposal / new_plan), credits all-time and this month, and the most-used model; `fetchUsage()` reads the user's own rows (RLS) and returns null for signed-out, guest or failure.
+- `src/components/ProfileStats.jsx`: "Your travels" panel in Settings -> Account & credits under Profile (reads local trips itself; Settings.jsx change is an import plus one line). Shows for anyone with trips; the AI usage block appears only for signed-in non-guest users and stays hidden if the read fails.
+- Units: there is no distance setting, so miles when Temperature units is F, else km. Distance is labelled "straight-line".
+- Limits: usage read capped at 5000 rows (upgrade path: a SQL aggregate view); a trip is "taken" only by its main version; no one-line summary in the Account menu (not added).
+
+## MCP server: let an AI app read and edit trips (#edb7a6) — 2026-10-04
+
+**Options.**
+- *Where it runs.* (a) Local stdio server in the npm helper: no hosting, but every user installs and pairs it, it needs their Supabase session on disk, and it can't serve claude.ai-style remote connectors. (b) Hosted remote MCP on Vercel (`api/mcp.js`, Streamable HTTP, JSON-RPC): one URL for Claude Code / Desktop (via `mcp-remote`) / other clients; the data and the sync engine are already server-reachable. (c) Both. **Chosen: (b).**
+- *Protocol code.* Official `@modelcontextprotocol/sdk` vs. a small hand-rolled subset. The SDK's HTTP transport pulls in a web framework and zod for what is four methods here; our endpoint is stateless and answers plain `application/json`. **Chosen: hand-rolled** (`initialize`, `ping`, `tools/list`, `tools/call`, notifications → 202, batches), no new dependency, fully unit-testable without a server. Revisit the SDK if we add resources, prompts, SSE or OAuth.
+- *Auth.* (a) The user's Supabase session JWT: expires in an hour and can't be pasted into an app config. (b) Personal access tokens made in Settings (**chosen**): `tfm_` + 32 random bytes, generated in the browser, only the SHA-256 stored in `mcp_tokens`, shown once, named, revocable, last-used stamped, max 10 per user, none for guests (RLS). (c) OAuth (needed for claude.ai's "custom connector" UI, which can't send a static header): bigger; left as a follow-up.
+
+**Design.**
+- `server/mcp.mjs` holds everything; `api/mcp.js` only adapts req/res (`/mcp` rewrite too). Token → hash → `mcp_tokens` row (service key) → `user_id`. Every `trips` / `mcp_edits` request is filtered `user_id=eq.<owner>` (the service key bypasses RLS, so this file is the only fence; a test asserts it for every call).
+- Tools: `list_trips`, `get_trip` (the in-app `tripToContext` text with ids), `list_versions`, `apply_ops`, `preview_ops`, `create_version`, `undo_last_edit`. No delete tool. `trip_id` is a root id (a version id also resolves); `version_id` defaults to the trip's main version, as My trips opens it.
+- Edits run the in-app `applyOps` (+ `syncAnchors`) on the record's `data` (all-or-nothing), then write `data` with `updatedAt = max(now, old + 1)` and `updated_at` to the same instant, so LWW sync accepts it and Realtime pushes it into an open app. The write is conditional on the row's `updated_at` not having moved since the read (an app edit in between is a reported conflict, not a clobber).
+- Undo: the previous `data` is saved to `mcp_edits` before each `apply_ops` (newest 20 per record kept). `undo_last_edit` restores this token's latest snapshot with a fresh stamp (so sync accepts the older content), refuses if the trip moved since the edit unless `force`.
+- Guardrails: ops validated against op/target and per-target data-key allowlists (no ids, coordinates, images, cached city detail, or nested blobs; strings <= 2000 chars; <= 50 ops; request <= 64 KB); result must fit the 256 KB row limit; `create_version` respects the 100-row ceiling; 60 calls/min per token (`MCP_RATE_PER_MIN`), counted from `usage_events` kind `mcp_call` (0 credits, new `token_id` column), fails closed; ids are format-checked before they reach a PostgREST filter; tool failures are `isError` results, not HTTP 500s; internal errors never echo details.
+- Settings → Account → "Connect an AI app" (`ConnectAI.jsx`): create, show-once with Copy and Claude Code / Desktop snippets, list with last used, two-click Revoke.
+
+**Not done / limits.** No OAuth (claude.ai's connector UI won't work; Claude Code `--header` and Claude Desktop through `mcp-remote` do). Can't delete trips, set coordinates or images, run AI, or edit chats/drafts. The app's in-memory state wins if it has an unsynced edit newer than the MCP write (LWW). A created version is removed in the app. Migration `0012_mcp_tokens.sql` must be applied before any of this works.
+
+## 2026-10-04 — Distance units setting (km / mi)
+- New `settings.distanceUnits` ('mi' | 'km'), Settings → General next to Temperature. `lib/units.js` holds `cleanDistanceUnits`, `distanceIn`, `fmtDistance` (display only; internal math stays km).
+- Defaulting: `loadSettings` derives it from `tempUnits` when unset/invalid (°F → mi), so existing users see no change.
+- Used by: profile stats, BestWayCard airport chips, airport-pick notes (`tripAirportPicks`), and the "~N from town" note written by `applyOption`. Assistant prompts untouched (no settings seam in `buildEditPrompt`; `fareSummary` is unused in src).
+
+## 2026-10-04 — Friends (#78d712)
+- **What.** Request/accept friendships by exact username (Account menu → Friends). A friend's trips open read-only (summary view: map, dates, stops, travel, per-stop plan, versions) with a "Viewing @name's trip · read-only" banner and an optional "Copy to my trips" (new root, fresh ids, nothing booked, confirmations cleared). Per-trip "Hide this trip from friends" in the trip's edit panel (`hideFromFriends` on the root record; syncs like any field). Guests get a sign-up prompt, no friends UI.
+- **Deviation: RPC instead of a trips SELECT policy.** Friends never get table access to `trips`; they call `friend_trips(friend)` (security definer): requires an accepted friendship (unfriend revokes at once), returns only live, un-hidden rows (a hidden root hides all its versions; tombstones never leak), and strips `drafts`, travel-leg `confirmation` / `bookingUrl` and the flag itself. A policy would make every plain `select * from trips` (sync pull, Realtime) return friends' rows, and RLS can't hide fields inside the jsonb.
+- **Sync pitfall.** Even so, sync no longer trusts RLS alone: `fetchRemote` filters `user_id = me`, `mergeRemote`/`ownRows` drop any row that isn't mine before `mergeSets`, and the Realtime handler ignores other users' rows (the channel was already `user_id=eq.<me>`). Friends' trips live only in `FriendsPage` state, never in the trips store/localStorage or `pushChanges`. Tests in `tests/friends.test.mjs`.
+- **Read-only view is not TripPage.** TripPage writes back derived data (geocoding, weather, audits) as it renders; guarding every path was more invasive and riskier than a purpose-built summary with no write path.
+- **Abuse.** `friendships_guard` caps pending outgoing requests at 50; column grants make requester/addressee/created_at immutable and only `status` updatable; only the addressee can accept; either party can delete. Username lookup uses the already-readable profiles.
+- **Not done / limits.** No block list (a declined user can re-request; capped at 50 pending). No live updates of the friends page (refreshes on open and on window focus). Notes, budget and activity notes in a visible trip are readable by friends: hide the trip if that matters. Friends see a trip as of its last sync. Migration `0014_friends.sql` must be applied (untested against a database here).

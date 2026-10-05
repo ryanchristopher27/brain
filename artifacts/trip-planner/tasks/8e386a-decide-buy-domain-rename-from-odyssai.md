@@ -3,11 +3,11 @@ id: 8e386a
 source: web:trip-planner:domain-name
 title: Buy the Trip Fairy domain
 type: task
-status: backlog
+status: done
 assignee: 
 scoped_dir: .
 created: 2026-09-19T23:47:41Z
-updated: 2026-09-24T04:12:02Z
+updated: 2026-09-27T01:03:16Z
 ---
 
 ## Brief
@@ -19,3 +19,6 @@ Name is decided (Trip Fairy). Pick + buy the domain (e.g. tripfairy.app); the pu
 
 ## Updates
 - 2026-09-19T23:47:41Z · created
+- 2026-09-27T01:03:16Z · status: backlog → doing (mytripfairy.com bought and pointed at Vercel by the user)
+- 2026-09-27T01:03:16Z · status: doing → review (Live: 200, www→apex 307, /ai /flights /advisories answer)
+- 2026-09-27T01:03:16Z · status: review → done (Verified 2026-09-26)

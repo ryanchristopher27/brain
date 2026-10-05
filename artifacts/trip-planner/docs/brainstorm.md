@@ -899,3 +899,241 @@ task.
 **Open questions added:** MoR vs Stripe final call (fees vs control); exact free-tier counts (how
 many prompts / plans per month); whether MCP entrypoint warrants server-canonical records sooner
 (it's also useful for the iOS app and cross-device truth).
+
+---
+
+## 2026-09-26 · Flight-optimized trip planning (8517f3)
+
+### Problem / Opportunity
+Real fares work end to end (verified live 2026-09-26: DEN→LIS round trip → 38 itineraries, booking links
+resolve, United direct first). But flights are searched in isolation: nothing uses the *shape* of the
+trip to answer "which airports do I fly into and out of, on which dates?" The date-finder prices one
+round trip over 7 departure days; the Flights page is a manual search.
+
+### Goals
+- Price the trip's two ends from its own shape: best way in to the first city and out of the last.
+- Suggest dates (start + length) that make the whole trip cheaper, and show the tradeoffs.
+- Keep fare lookups affordable and abuse-proof on the public site.
+
+### Audience
+Anyone planning a multi-city trip with a departure airport set (trip.startLocation / settings.home).
+
+### Constraints
+- Ignav: `POST /fares/search` takes 1–2 ordered legs with independent origin/destination → **open-jaw
+  works**. No calendar/date-range endpoint → every (route, date) cell is its own search.
+  Ignav quota/pricing not confirmed (pricing page is client-rendered) — open question.
+- `/flights/*` on Vercel is **unauthenticated today**; an optimizer click can fan out to 20–60 searches.
+- Local-first app; managed AI is credit-metered; the chat already applies undoable ops.
+
+### Ideas & Directions
+- **A. Book-end optimizer (core).** Compare round trip to the first city (+ ground backtrack from the
+  last), open-jaw in-first/out-last (one 2-leg search), and optionally the reversed route. Each option:
+  price + total travel time + stops + the extra ground leg (from existing hop estimates).
+- **B. Gateway airports.** Per end, up to ~2 candidates: primary, same-metro alternates (LHR/LGW/STN),
+  a nearby hub ≤ ~2h by ground. From a hub table + LLM proposal; capped for combinatorics.
+- **C. Flexible dates.** Departure ±3 days × length ±1 → ~21 cells per route option, as a heat grid;
+  locking a cell sets start + length together (dates editor already links them).
+- **D. Reorder to fit gateways.** Suggest reversing / moving a hub-adjacent stop to an end, as an
+  undoable AI edit. *Deferred past v1.*
+- **E. LLM + fares.** Precomputed: a deterministic optimizer produces a compact fare summary the chat
+  explains (cheap, testable, can't burn quota). Tool-style searches from the model: later, ≤1 per turn.
+- **F. Cost & abuse control.** Sign-in required for live fares on the deployed site (same Supabase JWT
+  check as /ai/plan); per-user daily search cap logged in usage events; shared server-side fare cache
+  (Supabase, keyed route+dates+pax+cabin, ~6–12h TTL); one batch endpoint (`/flights/sweep`) that runs a
+  grid server-side with bounded concurrency instead of N browser calls. Local helper stays unrestricted.
+- **G. Freshness.** Cached prices labeled with age; re-verify on select (Ignav `price.status`); booked
+  legs keep `priceAtSelection` (exists).
+- **H. Intra-trip flight hops.** Out of v1 (per-hop search exists; later: "this 9h train has a $60 flight").
+
+### Recommendations
+v1 = **F → A → C + light B**, with **E precomputed**. D and H follow.
+
+### Suggested Decisions (confirmed by user 2026-09-26)
+- Fare access on the deployed site: **signed-in only**, per-user daily cap + shared fare cache; local
+  helper unrestricted. No credits for sweeps in v1.
+- v1 scope: **ends + dates + airports** — open-jaw vs round-trip, ±3-day × ±1-length grid, ≤2 airports
+  per end, AI explains tradeoffs. Reordering later.
+
+### Open Questions
+- Ignav plan limits (searches/month, rate limit, cost per search) → sets the daily cap and grid size.
+- Daily cap value, and whether anonymous visitors get a tiny taste (e.g. 3 searches/day by IP).
+- Hub table source: curated JSON vs LLM-proposed + validated via `/flights/airports`.
+- How "best" is scored: price only, or price + a time/stops penalty (user-tunable "cheapest ↔ easiest")?
+- Where the optimizer lives in the UI: Flights page section, trip-page card, or both.
+- Cache store: new Supabase table vs reusing ai_cache.
+
+### Next Steps (what /plan needs)
+Milestones roughly: FO1 flight gating + fare cache + sweep endpoint → FO2 book-end optimizer core
+(pure, unit-tested option builder + scorer) → FO3 gateway candidates (hub table + LLM, capped) →
+FO4 flexible-date grid UI + lock → FO5 chat integration (fare summary in context, tradeoff copy).
+
+#### Addendum (2026-09-26) — pricing + accounts
+- Ignav: first 1,000 requests free, then **$2 / 1,000** (~$0.002/search). A full 21-cell grid ≈ $0.04; a
+  worst-case sweep (grid × 2 route shapes × 2 gateways ≈ 80 searches) ≈ $0.16; a 150/day cap bounds a
+  heavy user at ~$0.30/day. The shared cache cuts most of it. Real risk is scripted abuse, not normal use.
+- **No account wall for the app.** Accounts are required only for what costs us money (managed AI —
+  already — and live fares on the deployed site). Rest stays open + local-first, with a "sign in to
+  save & sync" nudge. Considered app-wide accounts (simpler gating, server-canonical data for iOS/MCP/
+  chat history) — rejected for now: first-visit friction, contradicts the free local-first layer.
+- **Backlog:** Supabase anonymous sessions (per-browser user id, upgradable to a real account) → a small
+  signed-out "taste" (e.g. 3 fare searches / 2 AI turns), with IP rate limits or CAPTCHA.
+
+## 2026-09-27 · Broader ideation: seasons, routes, options & versions (5705ac)
+
+### Problem / Opportunity
+Ideation today is narrow. A proposal becomes plans (whole-trip versions) by copying, but:
+- Plans can't be compared.
+- Weather is LLM-estimated highs.
+- Each hop has one AI-chosen transport.
+- Each city has one list of do/stay/food.
+
+The brief asks for exploration: weather across seasons, wider travel options between cities,
+browsable versions of stops and ordering, and alternatives for things to do, restaurants and stays.
+
+### Goals
+- Answer "when should I go?" with real climate data, per stop and for the whole route.
+- Let a traveler see and compare different shapes of the same trip (cities, order, dates).
+- Offer real choices inside a plan (how to get between cities, where to stay, what to do) without
+  multiplying plans.
+- Keep the audit, budget and assistant coherent: they only ever reason about what's picked.
+
+### Audience
+Travelers early in planning (proposal stage) who haven't fixed dates or a route. Secondarily,
+travelers refining a plan who want to swap a hotel or a leg.
+
+### Constraints
+- The existing v4 record (`kind`, `proposalId`, `variantName`) and the ops / undo / audit engine.
+  Changes must be additive and survive Supabase sync.
+- Managed AI is credit-metered. Background calls run on gpt-oss-120b. Ignav searches cost
+  ~$0.002 each.
+- Must work at phone width (the phone polish pass just landed).
+
+### Decided (via this brainstorm)
+- **Two levels of alternatives, handled differently:**
+  - Structural changes (stops, order, dates) → **plans**.
+  - Contents (legs, stays, food, do) → **options on the item**: a shortlist with one picked.
+
+  This avoids nested versions and a combinatorial explosion.
+- **Versions = both** — quick throwaway alternatives to compare ("drafts" that aren't saved as
+  plans), plus "Keep as plan" to promote any draft into a full plan that stays active alongside
+  others.
+- **Shortlists live on both proposals and plans**, with one pick per slot and swaps allowed anytime.
+
+### Ideas & Directions
+
+#### 1 · Season explorer (when to go)
+- **Data:** real climate normals from Open-Meteo's historical archive (free, no key).
+- **Per stop:** a 12-month strip with high/low, rainy days and sunshine.
+- **Busy season:** a crowd hint from `holidays.js`.
+- **Whole route:** a "Best: May, Sep–Oct" verdict.
+- **Replaces** the LLM temperature estimate in `derive.js`: more accurate, and no AI cost.
+- **Optional, on request only:** a fare-seasonality hint from a few sampled Ignav searches.
+
+#### 2 · Travel options per leg
+- Each hop holds 2–4 modes (train / bus / drive / flight) with time and cost ranges, and one picked.
+- **Data:** flights come live from Ignav; ground transport comes from the LLM, as T2 does today.
+- **Feeds:** the budget, the audit, and route comparisons.
+
+#### 3 · Compare plans + quick versions
+- **Compare:** plans and drafts side by side (stops, nights, dates, travel time, flight cost,
+  weather fit, budget) with differences highlighted. On phones, swipeable cards.
+- **Quick versions:** "Try a version where…" → the AI generates a draft. "Keep as plan" promotes
+  it (reusing the snapshot escalation).
+
+#### 4 · Route options
+- "Other ways to do this trip" → 2–3 route drafts (fewer moves, coastal loop, add/swap a city).
+- Each draft has a mini map, nights, total travel time and a rough cost.
+- Shown in the compare view, reusing the fare optimizer's reversed-order search.
+
+#### 5 · Shortlists for stays / food / things to do
+- **Stays:** ~3 per city across price tiers (budget / mid / splurge), with one picked.
+- **Food & do:** a candidate pool plus a planned set, with "Swap" and "More like this".
+- **Assistant:** a new `pick`-style op so the assistant can change picks.
+
+### Cross-cutting considerations
+- **Cost:** alternatives are generated on request only, never automatically. They are
+  credit-priced, with bulk generation on the background model.
+- **Audit and budget** read only picked options; unpicked candidates are inert.
+- **Size and sync:** cap options per slot (~5) and drafts per proposal (~3) so trip rows stay small.
+- **Proposal vs plan tone:** exploration defaults to the proposal. In plans, picks feel settled but
+  remain swappable.
+
+### Recommendations (build order)
+1. **Season explorer** — cheapest, most accurate, immediately useful at the proposal stage.
+2. **Travel options per leg** — extends T2 and the flights work already built.
+3. **Compare view + quick versions (drafts → Keep as plan)** — makes versions explorable.
+4. **Route options** — plugs into the compare view.
+5. **Shortlists** for stays / food / do.
+
+### Suggested Decisions (confirm in `/plan`)
+- Where drafts live: in the proposal record (recommended), not as plans until kept.
+- Option shape: `options[]` + `pickedId` on travel legs and on POI slots — one shared pattern.
+- Climate source: Open-Meteo archive, averaged over ~10 years and cached per coordinate.
+
+### Open Questions (for `/plan`)
+- Where the climate data is fetched and cached: the client straight from Open-Meteo, or the
+  server with a shared cache.
+- Credit price of "generate alternatives" (routes / drafts / shortlists).
+- How the compare view handles more than 3 items on phones.
+- Migration: do existing single-transport legs become a one-option list?
+
+### Next Steps — what `/plan` needs
+1. Data model for drafts and for `options[]` + `pickedId`.
+2. Milestones, e.g. **BI1 season explorer → BI2 leg options → BI3 compare + drafts →
+   BI4 route options → BI5 shortlists**.
+3. The AI ops contract for generating and picking options.
+
+## 2026-10-01 · One fluid trip + place/base stops + fixed-date anchors (#af9be2, #1858f1)
+
+### Problem
+- **Hard lifecycle.** A proposal and a plan are separate records; "Create plan" forks a snapshot that then drifts, starts a fresh chat, and is the only place dates, lodging, travel legs, activity times/costs, the date finder and Flights are allowed. To add a date or pick a hotel you must fork.
+- **Stops assume "a city you sleep in".** Trips built around sights (Utah's Mighty 5) don't fit: Zion is visited but you sleep in Springdale; Capitol Reef is a half-day on a drive day (0 nights); Arches + Canyonlands share Moab. And lodging is plan-only, so "where do we sleep?" can't be explored early.
+- **Fixed-date things** (a festival, a game, a wedding) have no way to anchor the trip.
+
+### Decisions (user, 2026-10-01)
+1. **One fluid trip.** No fork: a trip gains detail in place (idea → shaped → dated → booked → done) and every field can be filled whenever it's known. Its stage is derived from what's filled in. Versions remain optional alternatives — peers, one marked main.
+2. **Place + base.** A stop is a place you go (city, park, region, event); it may name a separate base where you sleep ("sleeping in Springdale"), several stops may share a base (Moab), and a stop may be 0 nights (a day stop). City trips look exactly as today.
+3. **Fixed-date anchors.** A stop or activity can be pinned to a date (and time); the date finder and the AI plan around anchors, and an anchor implies trip dates when none are set.
+
+### Why this is cheaper than it sounds
+Proposals and plans already share one record shape (`kind` + `proposalId`). The difference is gating (`PLAN_ONLY_FIELDS` etc.), the escalate fork, and per-kind prompts — so "fluid" is mostly removing restrictions; existing proposal + plans become versions of one trip with no data rewrite.
+
+## 2026-10-01 · Research — real trip-data sources (#5c8933)
+
+### Question
+Which APIs/datasets give Trip Fairy real, verifiable places (things to do, stays, food), ratings/reviews, official links and booking links, to replace or validate today's AI-suggested places (city pages, BI5 shortlists, map layers, getting around)?
+
+### Today
+Places, prices and blurbs come from the LLM (derive.js city briefings) with coords checked against Nominatim; photos from Wikipedia/Openverse; getting-around from Wikivoyage + LLM; flights are real (Ignav, with booking links); climate from Open-Meteo.
+
+### Candidates (checked 2026-10-01)
+| Source | What it gives | Access & cost | Terms that matter | Fit |
+|---|---|---|---|---|
+| Google Places API (New) | Best coverage; ratings, reviews, photos, hours | Per-SKU free caps (10k Essentials / 5k Pro / 1k Enterprise per month), then e.g. Details Pro $17/1k, Enterprise (reviews+photos) $20/1k | Content **may not be shown on a non-Google map** (we use MapLibre; only Places UI Kit is exempt); only place_id cacheable indefinitely, lat/lng 30 days; Google logo + per-item attributions | Poor — conflicts with our map and caching |
+| Foursquare Places API | 100M+ places; Pro fields (name, category, address, coords, phone, website); Premium (rating, price, hours, tips, photos) | 500 free Pro calls/mo (from 2026-06-01), then $15/1k; Premium $18.75/1k, no free tier | Storage/caching terms **not yet verified** | Good for validation (Pro) and on-demand detail (Premium) |
+| Foursquare OS Places (dataset) | Same 100M+ POIs, 22 core attributes, monthly | Free, Apache 2.0, token via Places portal (Iceberg/Parquet) | Attribution | Good for bulk validation, but we'd host a lookup |
+| Overture Maps Places | ~80M places (Meta, Microsoft, Foursquare, BrightQuery) with a confidence score | Free, CDLA Permissive 2.0 / Apache 2.0, monthly | No share-alike | Same as above; complementary |
+| Tripadvisor Content → Terra API | Ratings, reviews, photos for 7.5M locations | Legacy 5k free/mo; Terra 1k free then undisclosed pay-as-you-go | AI/LLM use needs a signed order (legacy: internal testing only); only location_id cacheable; logos, link-backs, non-indexable display | Poor — Trip Fairy is AI-first |
+| Yelp Fusion | Business data + reviews | $229–643/mo plans | US-centric | Poor — cost, coverage |
+| OSM / Overpass | Free POIs, no ratings | Public instance: not for commercial apps (self-host or paid) | ODbL attribution, share-alike | Only via a hosted/paid instance |
+| Wikivoyage | Curated see/do/eat/sleep listings with coords, prices, hours | Free (already used) | CC BY-SA attribution | Good free seed for places |
+| Viator Partner API | Bookable tours & activities, availability | **Instant** basic API access with an affiliate account; free | 8% commission, 30-day window | Best for bookable things to do |
+| GetYourGuide | Tours & activities | API needs ≥100k monthly visits; links via affiliate (7–8%, also through Travelpayouts) | — | Links only for now |
+| Booking.com Demand API | Stays inventory + booking | Managed Affiliate Partner + account manager; partner registration paused | AI use needs written approval | Not reachable now |
+| Expedia Rapid | Stays inventory + booking | Partner-only, approval + certification, months | — | Not reachable now |
+| Stay22 | Stay deep links / maps / API across Booking, Expedia, Hotels.com, Vrbo | Self-serve; earns ~30% of Stay22's commission | — | Best for stay links + revenue now |
+| Travelpayouts (network) | Links (some feeds/APIs) for Omio (6%), 12Go (4–5.5%), Hotellook (5–7%), GetYourGuide (8%), Klook | Self-serve | Per-brand API conditions | Good for train/bus/activity links |
+| Rome2Rio API | Multimodal routes | Commercial agreement | — | Skip; keep Wikivoyage + estimates |
+
+### Recommendation
+1. **Validate first (R1):** run each AI-suggested place through Foursquare Pro (Place Match/search) — keep real ones with true coords, website and a stable id; flag or drop the rest. Cost at today's volume is inside the free 500/mo (≈20 lookups per city page; beyond that ≈$0.30 a city page). Seed places from Wikivoyage listings where a city has them. Bulk alternative later: an Overture / FSQ OS lookup we host.
+2. **Book & earn (R2):** Viator API for bookable things to do on city pages (8%); Stay22 links on stays (Booking / Expedia / Vrbo); Omio / 12Go links on ground legs via Travelpayouts. Flights already link via Ignav.
+3. **Enrich on demand (R3):** ratings, price, hours, photos from Foursquare Premium only when a place card is opened, stored only as its terms allow.
+4. **Not now:** Google Places (non-Google-map clause, caching), Tripadvisor (AI-use restrictions), Yelp (cost/US), Booking Demand / Expedia Rapid (partner-gated), GetYourGuide API (traffic minimums), Rome2Rio (commercial agreement).
+
+### Open before building
+- Accounts the user signs up for: Foursquare developer, Viator affiliate, Stay22, Travelpayouts.
+- Verify Foursquare's storage/caching terms (decides what we keep on the record).
+- Disclosure: affiliate links need a short "we may earn a commission" note.
+
+Sources: Google pricing (woosmap.com/blog/google-places-api-pricing), Google terms (developers.google.com/maps/documentation/places/web-service/policies, cloud.google.com/maps-platform/terms/maps-service-terms), Foursquare pricing (docs.foursquare.com/developer/reference/upcoming-changes, foursquare.com/pricing), FSQ OS Places (foursquare.com/resources/blog/data/evolving-fsq-open-source-places), Overture (docs.overturemaps.org/guides/places), Tripadvisor (tripadvisor.com/business/solutions/hotels/content-api, vorplabs.com/agent-tools/tripadvisor-content-api), Yelp (business.yelp.com/data/resources/pricing), Overpass (wiki.openstreetmap.org/wiki/Overpass_API), Viator (partnerresources.viator.com/travel-commerce/affiliate), GetYourGuide (partner.getyourguide.support/hc/en-us/articles/13981133907613), Booking (developers.booking.com/demand/docs/getting-started/prerequisites), Expedia (developers.expediagroup.com/rapid/setup), Stay22 (stay22.com/docs), Travelpayouts (travelpayouts.com/blog/train-affiliate-programs), Rome2Rio (apis.io/providers/rome2rio).
