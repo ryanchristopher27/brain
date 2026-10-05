@@ -170,6 +170,85 @@ function resourcesSection(resDoc) {
   return wrap;
 }
 
+// ── test accounts ────────────────────────────────────────────────────────
+function copyBtn(text, label = "copy") {
+  const b = el("button", "dd-copy", label);
+  b.type = "button";
+  b.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(text); b.textContent = "copied"; setTimeout(() => (b.textContent = label), 1200); } catch { b.textContent = "copy failed"; }
+  });
+  return b;
+}
+
+function testUsersSection(name, tu) {
+  const wrap = el("div", "dd-tu");
+  wrap.append(el("div", "dd-section-title", "Test accounts"));
+  if (!tu || !tu.declared) {
+    wrap.append(el("p", "empty", "None declared. Add .brain/test-users.json to the project to list test accounts here."));
+    return wrap;
+  }
+  if (tu.summary) wrap.append(el("p", "dd-tu-summary", tu.summary));
+  const c = tu.credentials || {};
+  const state = el("div", "dd-tu-state");
+  state.append(el("span", "g" + (c.exists ? " ok" : "")));
+  state.append(document.createTextNode(c.exists
+    ? `Seeded ${c.seeded_at ? new Date(c.seeded_at).toLocaleString() : ""} · passwords in ${c.file}`
+    : "Not seeded on this machine yet — run the seed command below."));
+  wrap.append(state);
+
+  const table = el("table", "dd-res");
+  const htr = el("tr");
+  ["User", "Email", "Has", "Friends", "Password"].forEach((h) => htr.append(el("th", null, h)));
+  const thead = el("thead"); thead.append(htr); table.append(thead);
+  const tbody = el("tbody");
+  const pwCells = new Map();
+  for (const u of tu.users) {
+    const tr = el("tr");
+    const cells = [["User", "@" + u.username], ["Email", u.email], ["Has", u.has], ["Friends", u.friends]];
+    cells.forEach(([label, v], i) => {
+      const td = el("td", i < 2 ? "dd-env" : null, v || "—"); td.dataset.label = label;
+      if (label === "Email" && v) td.append(copyBtn(v));
+      tr.append(td);
+    });
+    const pw = el("td", "dd-env", c.exists ? "••••••" : "—"); pw.dataset.label = "Password";
+    pwCells.set(u.email, pw);
+    tr.append(pw);
+    tbody.append(tr);
+  }
+  table.append(tbody);
+  wrap.append(table);
+
+  if (c.exists) {
+    const reveal = el("button", "dd-copy dd-reveal", "Reveal passwords");
+    reveal.type = "button";
+    reveal.addEventListener("click", async () => {
+      try {
+        const { users } = await api(`/api/devdash/${encodeURIComponent(name)}/test-credentials`);
+        for (const { email, password } of users) {
+          const td = pwCells.get(email);
+          if (!td) continue;
+          td.textContent = password;
+          td.append(copyBtn(password));
+        }
+        reveal.remove();
+      } catch (e) { reveal.textContent = "couldn’t load: " + e.message; }
+    });
+    wrap.append(reveal);
+  }
+
+  const cmds = Object.entries(tu.commands || {});
+  if (cmds.length) {
+    const box = el("div", "dd-tu-cmds");
+    for (const [k, v] of cmds) {
+      const row = el("div", "dd-tu-cmd");
+      row.append(el("span", "dd-tu-k", k), el("code", null, v), copyBtn(v));
+      box.append(row);
+    }
+    wrap.append(box);
+  }
+  return wrap;
+}
+
 // ── header ───────────────────────────────────────────────────────────────
 function headerBlock(name, project, uptime) {
   const h = el("div", "dd-header");
@@ -214,6 +293,7 @@ async function renderProject(name) {
   grid.append(trackerCard(d.tracker));
   pane.append(grid);
 
+  pane.append(testUsersSection(name, d.test_users));
   pane.append(resourcesSection(d.resources));
 }
 

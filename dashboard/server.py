@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import data, devstatus, projects as projects_mod, registry, resources as resources_mod, tracker
+from . import data, devstatus, projects as projects_mod, registry, resources as resources_mod, testusers as testusers_mod, tracker
 from .process_manager import ProcessManager, SpawnError
 from .voice_bridge import VoiceBridge
 
@@ -279,7 +279,18 @@ async def devdash(name: str):
         "vercel": vercel,
         "supabase": supabase,
         "uptime": uptime,
+        "test_users": testusers_mod.load(root),
     })
+
+
+@app.get("/api/devdash/{name}/test-credentials")
+async def devdash_test_credentials(name: str):
+    """Test-account passwords — a separate call the page makes only when you click Reveal,
+    so the main dashboard payload never carries them. Local + bearer-token like every /api route."""
+    root = _project_root(name)
+    if root is None:
+        return JSONResponse({"error": "unknown project"}, status_code=404)
+    return JSONResponse({"users": testusers_mod.credentials(root)})
 
 
 @app.get("/api/tasks")

@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from . import devstatus, resources, secrets_store
+from . import devstatus, resources, secrets_store, testusers
 
 
 # ── resources: schema ────────────────────────────────────────────────────────
@@ -225,6 +225,38 @@ def test_uptime_check_ok_and_error():
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=RuntimeError("timeout"))):
         out = _run(devstatus.uptime_check("https://example.com"))
     assert out["ok"] is False and "timeout" in out["error"]
+
+
+# ── test accounts panel ──────────────────────────────────────────────────────
+def _tu_root(decl, creds=None):
+    root = Path(tempfile.mkdtemp())
+    (root / ".brain").mkdir()
+    (root / ".brain" / "test-users.json").write_text(json.dumps(decl))
+    if creds is not None:
+        (root / "creds.json").write_text(json.dumps(creds))
+    return root
+
+
+def test_testusers_undeclared():
+    assert testusers.load(Path(tempfile.mkdtemp())) == {"declared": False}
+    assert testusers.credentials(Path(tempfile.mkdtemp())) == []
+
+
+def test_testusers_load_never_includes_passwords():
+    decl = {"users": [{"username": "ava", "email": "a@x"}], "credentials_file": "creds.json"}
+    root = _tu_root(decl, {"seededAt": "2026-10-04T00:00:00Z", "users": [{"email": "a@x", "password": "pw-secret"}]})
+    out = testusers.load(root)
+    assert out["declared"] and out["credentials"]["exists"] and out["credentials"]["seeded_at"]
+    assert "pw-secret" not in json.dumps(out)
+    assert testusers.credentials(root) == [{"email": "a@x", "password": "pw-secret"}]
+
+
+def test_testusers_credentials_file_must_stay_in_project():
+    outside = Path(tempfile.mkdtemp()) / "creds.json"
+    outside.write_text(json.dumps({"users": [{"email": "a", "password": "p"}]}))
+    root = _tu_root({"users": [], "credentials_file": "../" + outside.parent.name + "/creds.json"})
+    assert testusers.credentials(root) == []
+    assert testusers.load(root)["credentials"]["exists"] is False
 
 
 TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
