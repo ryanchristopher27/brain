@@ -184,12 +184,13 @@ def list_tasks(root: Path) -> list[dict]:
 
 
 def all_tasks(roots: list[Path] | None = None) -> list[dict]:
-    if roots is None:
-        roots = [p for _, p in data._project_roots()]
+    # Label tasks with the registry name, not the folder name: the API resolves projects by
+    # registry name, so a renamed project (folder ≠ name) must round-trip.
+    pairs = data._project_roots() if roots is None else [(Path(r).name, r) for r in roots]
     out = []
-    for root in roots:
+    for name, root in pairs:
         for t in list_tasks(root):
-            out.append({**t, "project": Path(root).name, "root": str(root)})
+            out.append({**t, "project": name, "root": str(root)})
     return out
 
 

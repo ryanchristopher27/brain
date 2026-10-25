@@ -140,9 +140,15 @@ def generate(vault_path: str | None = None) -> Path:
         fp = vault / "projects" / fname
         fp.write_text(_merge_notes(fp, _card(p, generated)))
 
-    # Prune cards for projects no longer registered (but never touch notes-bearing orphans).
+    # Prune cards for projects no longer registered — but never one whose Notes section has
+    # anything written in it (every generated card has the empty heading).
     for existing in (vault / "projects").glob("*.md"):
-        if existing.name not in keep and _NOTES_MARKER not in existing.read_text():
+        if existing.name in keep:
+            continue
+        text = existing.read_text()
+        idx = text.find(_NOTES_MARKER)
+        notes = text[idx + len(_NOTES_MARKER):].strip() if idx != -1 else ""
+        if not notes:
             existing.unlink()
 
     # Bases board.

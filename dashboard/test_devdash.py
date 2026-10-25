@@ -45,7 +45,7 @@ def test_load_prefers_project_file_over_seed():
 
 def test_load_falls_back_to_seed_then_none():
     root = Path(tempfile.mkdtemp())
-    out = resources.load(root, "trip-planner")  # real seed shipped in dashboard/seed/
+    out = resources.load(root, "Trip Fairy")  # real seed shipped in dashboard/seed/
     assert out["source"] == "seed"
     assert any(r["name"] == "Vercel" for r in out["resources"])
     out2 = resources.load(root, "no-such-project-xyz")

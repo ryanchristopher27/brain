@@ -7,7 +7,7 @@ status: backlog
 assignee: 
 scoped_dir: .
 created: 2026-09-28T01:07:08Z
-updated: 2026-09-28T01:07:08Z
+updated: 2026-10-17T22:14:53Z
 ---
 
 ## Brief
@@ -19,3 +19,4 @@ Before promoting paid features / real traffic: subscribe to Open-Meteo API Profe
 
 ## Updates
 - 2026-09-28T01:07:08Z · created
+- 2026-10-17T22:14:53Z · comment: Scaling plan 2026-10-17: Open-Meteo free tier is non-commercial; Standard ~$29/mo needed before selling credits.

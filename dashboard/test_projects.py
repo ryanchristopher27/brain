@@ -138,6 +138,20 @@ def test_sync_skips_already_tracked():
     assert len(projects.list_projects()) == 1           # no duplicate
 
 
+def test_vault_prunes_orphans_but_keeps_ones_with_notes():
+    root = _fresh_registry()
+    projects.add_project("keep-me", str(root))
+    vault = Path(tempfile.mkdtemp()) / "vault"
+    projects_vault.generate(str(vault))
+    cards = vault / "projects"
+    (cards / "old-empty.md").write_text("---\ntitle: old\n---\n\n## Notes\n")
+    (cards / "old-noted.md").write_text("---\ntitle: old\n---\n\n## Notes\n\nremember this\n")
+    projects_vault.generate(str(vault))
+    assert (cards / "keep-me.md").exists()
+    assert not (cards / "old-empty.md").exists(), "orphan with an empty Notes section should be pruned"
+    assert (cards / "old-noted.md").exists(), "orphan with notes must be kept"
+
+
 TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
 
 

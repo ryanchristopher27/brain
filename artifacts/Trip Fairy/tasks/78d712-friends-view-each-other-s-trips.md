@@ -7,7 +7,7 @@ status: review
 assignee: 
 scoped_dir: .
 created: 2026-09-28T01:47:43Z
-updated: 2026-10-05T03:19:03Z
+updated: 2026-10-17T21:11:14Z
 ---
 
 ## Brief
@@ -23,3 +23,4 @@ Let users friend each other (request/accept) and view friends' trips (read-only)
 - 2026-10-05T03:12:29Z · status: backlog → doing (Built)
 - 2026-10-05T03:12:29Z · status: doing → review (Friends implemented on feat/friends; needs migration 0014 applied and a real two-account check.)
 - 2026-10-05T03:19:03Z · comment: 0014 applied 2026-10-04; sanity checks pass (no rows without auth, booking fields stripped). Awaiting a real two-account test by the user.
+- 2026-10-17T21:11:14Z · comment: User review pass 2026-10-17: FAIL — see follow-up.
