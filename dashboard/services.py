@@ -272,6 +272,33 @@ def _listen_pids(port: int) -> list[int]:
     return sorted({int(x) for x in out.split() if x.isdigit()})
 
 
+def port_owner(port) -> str | None:
+    """Working directory of the process listening on `port` (None if unknown). Two apps can
+    declare the same port (e.g. two Vite apps on 5173), so an open port alone doesn't say
+    whose server it is."""
+    for pid in _listen_pids(port):
+        out = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+                             capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            if line.startswith("n"):
+                return line[1:]
+    return None
+
+
+def _owns(root: Path, owner: str | None) -> bool:
+    if not owner:
+        return False
+    r, o = Path(root).resolve(), Path(owner).resolve()
+    return o == r or r in o.parents
+
+
+def _listener(root: Path, port) -> str:
+    """'none' | 'mine' (this app's server, started elsewhere) | 'other' (another app's)."""
+    if not port_open(port):
+        return "none"
+    return "mine" if _owns(root, port_owner(port)) else "other"
+
+
 def _reap(proc: subprocess.Popen, key: str) -> None:
     code = proc.wait()
     _update(key, exit_code=code, finished=time.time())
@@ -329,15 +356,22 @@ def _spawn(project: str, root: Path, entry: dict, kind: str, argv: list[str] | N
 
 
 # ── public operations ────────────────────────────────────────────────────────
+def _other_app_msg(port) -> str:
+    owner = port_owner(port)
+    return f"port {port} is in use by another app ({owner or 'unknown process'}) — stop it there first"
+
+
 def start_service(project: str, root: Path, decl: dict, name: str) -> dict:
     e = find(decl, "service", name)
-    if e["port"] and port_open(e["port"]):
-        raise RunError(f"port {e['port']} is already in use — {name} may be running outside the "
-                       "dashboard; stop it first", 409)
+    held = _listener(root, e["port"])
+    if held == "mine":
+        raise RunError(f"{name} is already running in a terminal (port {e['port']})", 409)
+    if held == "other":
+        raise RunError(_other_app_msg(e["port"]), 409)
     return _spawn(project, root, e, "service")
 
 
-def stop_service(project: str, decl: dict, name: str, external: bool = False) -> dict:
+def stop_service(project: str, root: Path, decl: dict, name: str, external: bool = False) -> dict:
     e = find(decl, "service", name)
     key = _key(project, "service", name)
     cur = _read_state().get(key, {})
@@ -345,7 +379,10 @@ def stop_service(project: str, decl: dict, name: str, external: bool = False) ->
         _update(key, stopped=True)
         _killpg(cur["pgid"])
         return {"stopped": "dashboard"}
-    if e["port"] and port_open(e["port"]):
+    held = _listener(root, e["port"])
+    if held == "other":  # never kill another app's server just because it shares the port
+        raise RunError(_other_app_msg(e["port"]), 409)
+    if held == "mine":
         if not external:
             raise RunError(f"{name} is running outside the dashboard (port {e['port']}); "
                            "confirm to stop it anyway", 409)
@@ -361,7 +398,7 @@ def stop_service(project: str, decl: dict, name: str, external: bool = False) ->
 
 def restart_service(project: str, root: Path, decl: dict, name: str, external: bool = False) -> dict:
     try:
-        stop_service(project, decl, name, external)
+        stop_service(project, root, decl, name, external)
     except RunError as e:
         if e.status != 409 or "isn't running" not in str(e):
             raise
@@ -380,7 +417,7 @@ def run_action(project: str, root: Path, decl: dict, name: str, confirm: str | N
         raise RunError(f'type "{e["confirm"]}" to confirm', 428)
     for need in e["needs"]:
         svc = find(decl, "service", need)
-        if not port_open(svc["port"]):
+        if _listener(root, svc["port"]) != "mine" and not _running(_read_state().get(_key(project, "service", need), {})):
             raise RunError(f"start {need} first", 409)
     return _spawn(project, root, e, "action", argv)
 
@@ -396,18 +433,19 @@ def stop_action(project: str, decl: dict, name: str) -> dict:
     return {"stopped": "dashboard"}
 
 
-def status(project: str, decl: dict) -> dict:
+def status(project: str, root: Path, decl: dict) -> dict:
     st = _read_state()
 
     def item(e: dict, kind: str) -> dict:
         cur = st.get(_key(project, kind, e["name"]), {})
         ours = _running(cur)
         if kind == "service":
-            up = port_open(e["port"])
             if ours:
-                state = "running" if (up or not e["port"]) else "starting"
-            elif up:
+                state = "running" if (port_open(e["port"]) or not e["port"]) else "starting"
+            elif (held := _listener(root, e["port"])) == "mine":
                 state = "external"
+            elif held == "other":
+                state = "conflict"  # port taken by a different app's server
             elif cur.get("finished") and not cur.get("stopped") and cur.get("exit_code") not in (0, None):
                 state = "crashed"
             else:
@@ -426,7 +464,7 @@ def status(project: str, decl: dict) -> dict:
                    started=cur.get("started"), finished=cur.get("finished"),
                    exit_code=cur.get("exit_code"), pid=cur.get("pid") if ours else None)
         if kind == "service":
-            out.update(port=e["port"], url=e["url"])
+            out.update(port=e["port"], url=e["url"], owner=port_owner(e["port"]) if state == "conflict" else None)
         return out
 
     return {"services": [item(s, "service") for s in decl["services"]],

@@ -39,14 +39,18 @@ def _wait(pred, timeout=8.0) -> bool:
 def _project(decl: dict) -> Path:
     services.RUNS_DIR = Path(tempfile.mkdtemp()) / "runs"
     services.SHELL_ARGS = ["/bin/sh", "-c"]
-    root = Path(tempfile.mkdtemp())
+    global _ROOT
+    root = _ROOT = Path(tempfile.mkdtemp())
     (root / ".brain").mkdir()
     (root / ".brain" / "services.json").write_text(json.dumps(decl))
     return root
 
 
+_ROOT = None
+
+
 def _state(decl, name, kind="action"):
-    st = services.status("p", decl)
+    st = services.status("p", _ROOT, decl)
     return next(x for x in st["services" if kind == "service" else "actions"] if x["name"] == name)
 
 
@@ -143,7 +147,7 @@ def test_service_start_stop_kills_whole_process_group():
     d = services.load(root)
     run = services.start_service("p", root, d, "web")
     assert _wait(lambda: _state(d, "web", "service")["state"] == "running")
-    services.stop_service("p", d, "web")
+    services.stop_service("p", root, d, "web")
     assert not services.port_open(port)
     try:
         os.killpg(run["pgid"], 0)
@@ -155,21 +159,21 @@ def test_service_start_stop_kills_whole_process_group():
 
 def test_external_server_detected_and_needs_explicit_stop():
     port = _free_port()
-    ext = subprocess.Popen([PY, "-m", "http.server", str(port), "--bind", "127.0.0.1"],
+    root = _project({"services": [{"name": "web", "command": "true", "port": port}]})
+    ext = subprocess.Popen([PY, "-m", "http.server", str(port), "--bind", "127.0.0.1"], cwd=root,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        root = _project({"services": [{"name": "web", "command": "true", "port": port}]})
         d = services.load(root)
         assert _wait(lambda: services.port_open(port))
         assert _state(d, "web", "service")["state"] == "external"
         for op in (lambda: services.start_service("p", root, d, "web"),
-                   lambda: services.stop_service("p", d, "web")):
+                   lambda: services.stop_service("p", root, d, "web")):
             try:
                 op()
                 assert False, "start/stop on an external server must not silently proceed"
             except services.RunError as e:
                 assert e.status == 409
-        services.stop_service("p", d, "web", external=True)
+        services.stop_service("p", root, d, "web", external=True)
         assert _wait(lambda: not services.port_open(port))
     finally:
         ext.kill()
@@ -246,6 +250,30 @@ def test_bad_param_declarations_are_reported():
     probs = " | ".join(services.load(root)["problems"])
     for frag in ("lowercase name", "type must be", "flag must", "select needs options", "valid regex"):
         assert frag in probs, probs
+
+
+def test_other_apps_server_on_our_port_is_a_conflict_and_never_stopped():
+    port = _free_port()
+    elsewhere = tempfile.mkdtemp()  # another app's folder
+    other = subprocess.Popen([PY, "-m", "http.server", str(port), "--bind", "127.0.0.1"], cwd=elsewhere,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        root = _project({"services": [{"name": "web", "command": "true", "port": port}],
+                         "actions": [{"name": "smoke", "command": "true", "needs": ["web"]}]})
+        d = services.load(root)
+        assert _wait(lambda: services.port_open(port))
+        assert _state(d, "web", "service")["state"] == "conflict"
+        for op in (lambda: services.start_service("p", root, d, "web"),
+                   lambda: services.stop_service("p", root, d, "web", external=True),
+                   lambda: services.run_action("p", root, d, "smoke")):
+            try:
+                op()
+                assert False, "must refuse while another app holds the port"
+            except services.RunError as e:
+                assert e.status == 409
+        assert other.poll() is None, "the other app's server must still be running"
+    finally:
+        other.kill()
 
 
 TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

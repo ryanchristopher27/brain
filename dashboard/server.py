@@ -313,7 +313,7 @@ async def apps_summary():
     def collect():
         out = []
         for n, root in data._project_roots():
-            st = services_mod.status(n, services_mod.load(root))
+            st = services_mod.status(n, root, services_mod.load(root))
             out.append({"name": n,
                         "servers_up": sum(s["state"] in ("running", "starting", "external") for s in st["services"]),
                         "servers_total": len(st["services"]),
@@ -327,7 +327,7 @@ async def runner_status(name: str):
     root, decl = _runner(name)
     if root is None:
         return JSONResponse({"error": "unknown project"}, status_code=404)
-    st = await asyncio.to_thread(services_mod.status, name, decl)
+    st = await asyncio.to_thread(services_mod.status, name, root, decl)
     return JSONResponse({"declared": decl["declared"], "problems": decl["problems"], **st})
 
 
@@ -338,7 +338,7 @@ async def runner_op(name: str, kind: str, item: str, op: str, req: RunReq):
         return JSONResponse({"error": "unknown project"}, status_code=404)
     ops = {
         ("services", "start"): lambda: services_mod.start_service(name, root, decl, item),
-        ("services", "stop"): lambda: services_mod.stop_service(name, decl, item, req.external),
+        ("services", "stop"): lambda: services_mod.stop_service(name, root, decl, item, req.external),
         ("services", "restart"): lambda: services_mod.restart_service(name, root, decl, item, req.external),
         ("actions", "run"): lambda: services_mod.run_action(name, root, decl, item, req.confirm, req.args),
         ("actions", "stop"): lambda: services_mod.stop_action(name, decl, item),

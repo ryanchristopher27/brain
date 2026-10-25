@@ -583,8 +583,9 @@ const LIVE = ["running", "starting", "external"];
 const STRIP_ROUTE = location.hash.startsWith("#/strip/");
 const SECRETS_FILE = "~/.claude/brain-dashboard/secrets.json";
 const STATE_TXT = { running: "Running", starting: "Starting", external: "Running in a terminal", stopped: "Stopped",
+  conflict: "Port in use",
   crashed: "Crashed", idle: "Not run yet", passed: "Passed", failed: "Failed" };
-const TONE = { running: "ok", starting: "warn", external: "ok", stopped: "off", crashed: "bad", idle: "off", passed: "ok", failed: "bad" };
+const TONE = { running: "ok", starting: "warn", external: "ok", conflict: "warn", stopped: "off", crashed: "bad", idle: "off", passed: "ok", failed: "bad" };
 
 function winOf(node) { return (node && node.ownerDocument && node.ownerDocument.defaultView) || window; }
 function prodUrl(res) {
@@ -781,7 +782,7 @@ function serverSwitch(ctx, s) {
   sw.setAttribute("aria-checked", String(on));
   sw.setAttribute("aria-label", `${s.label} ${on ? "on" : "off"}`);
   sw.title = busy ? "Working…" : on ? (s.state === "external" ? "Running in a terminal. Click to stop." : "Click to stop") : "Click to start";
-  sw.disabled = busy;
+  sw.disabled = busy || s.state === "conflict";
   sw.append(el("span", "sw-k"));
   sw.onclick = () => toggleServer(ctx, s);
   return sw;
@@ -831,7 +832,8 @@ function drawHead(ctx, kind, item) {
       acts.append(btn("Restart", { icon: "restart", busy, onClick: () => confirmExt() && op(ctx, key, "services", item.name, "restart", { external: ext }) }));
       acts.append(btn("Stop", { icon: "stop", busy, onClick: () => confirmExt() && op(ctx, key, "services", item.name, "stop", { external: ext }) }));
     } else {
-      acts.append(btn("Start", { icon: "play", kind: "primary", busy, onClick: () => op(ctx, key, "services", item.name, "start") }));
+      acts.append(btn("Start", { icon: "play", kind: "primary", busy, disabled: item.state === "conflict",
+        onClick: () => op(ctx, key, "services", item.name, "start") }));
     }
     cmd = item.command;
   } else if (kind === "act") {
@@ -874,6 +876,12 @@ function drawNotes(ctx, kind, item) {
     }
     downNeeds(ctx, item).forEach((s) => N.append(notice("warn", "server", `Needs ${s.label} running.`,
       btn(`Start ${s.label}`, { icon: "play", busy: ctx.pending.has(`svc:${s.name}`), onClick: () => op(ctx, `svc:${s.name}`, "services", s.name, "start") }))));
+  }
+  if (kind === "svc" && item.state === "conflict") {
+    const owner = item.owner || "";
+    const app = APPS.find((a) => a.root && (owner === a.root || owner.startsWith(a.root + "/")));
+    N.append(notice("warn", "alert", `Port ${item.port} is taken by ${app ? app.name : "another app"}'s server${app ? "" : ` (${owner || "unknown"})`}. Stop it there to run ${item.label} here.`,
+      app && !STRIP_ROUTE ? btn(`Open ${app.name}`, { icon: "external", kind: "ghost", onClick: () => go("project", app.name) }) : null));
   }
   if (kind === "svc" && item.state === "crashed") N.append(notice("bad", "alert", "Exited unexpectedly. The output below shows why."));
 }
