@@ -1,0 +1,12 @@
+{
+  "name": "brain",
+  "owner": { "name": "Ryan Christopher" },
+  "description": "Brain's Claude Code mods. install/install.sh adds this folder as a marketplace and installs each mod; edits are read from the folder (run /reload-plugins).",
+  "plugins": [
+    {
+      "name": "model-router",
+      "source": "./mods/model-router",
+      "description": "Routes each prompt to a model by how much thinking it needs: mechanical work to a cheap model, planning and design to a frontier one."
+    }
+  ]
+}

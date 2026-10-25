@@ -1,0 +1,59 @@
+{
+  "name": "model-router",
+  "version": "0.1.0",
+  "description": "Routes each prompt to a model by how much thinking it needs: mechanical work to a cheap model, planning and design to a frontier one.",
+  "author": {
+    "name": "Ryan Christopher"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "lightModel": {
+      "type": "string",
+      "title": "Light model",
+      "description": "Model for mechanical, fully specified work (commit, push, rename, run tests, small defined edits).",
+      "default": "claude-haiku-5-5"
+    },
+    "deepModel": {
+      "type": "string",
+      "title": "Deep model",
+      "description": "Model for planning, brainstorming, design, architecture and reviews.",
+      "default": "claude-opus-5-5"
+    },
+    "deepEffort": {
+      "type": "string",
+      "title": "Deep effort",
+      "description": "Reasoning effort for deep work.",
+      "options": [
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default": "high"
+    },
+    "standardModel": {
+      "type": "string",
+      "title": "Standard model",
+      "description": "Model for everything else. Leave empty to use whatever /model is set to.",
+      "default": ""
+    },
+    "classifier": {
+      "type": "boolean",
+      "title": "Use the classifier",
+      "description": "When the rules can't tell, ask a small fast model to classify the prompt (adds a moment before those turns). Off: such prompts stay on the standard model.",
+      "default": true
+    },
+    "maxLightMessages": {
+      "type": "number",
+      "title": "Keep light work on the session model past this many messages",
+      "description": "Prompt caching is per model, so on a long conversation the cheap model re-reads the whole history uncached, which can cost more than staying put.",
+      "default": 80
+    },
+    "escalateAfterSteps": {
+      "type": "number",
+      "title": "Escalate a light turn after this many requests",
+      "description": "A light task still going after this many model requests goes back to the standard model.",
+      "default": 12
+    }
+  }
+}

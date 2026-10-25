@@ -100,6 +100,50 @@ install_rule_file() {
   fi
 }
 
+# ── Mods (Claude Code plugins in mods/) ──────────────────────────────────────
+# brain is a local marketplace (.claude-plugin/marketplace.json): add it once, then install each
+# mod it lists at user scope so every session loads it. A folder marketplace with relative
+# sources is read from this folder itself, so editing a mod needs /reload-plugins, not a reinstall.
+install_mods() {
+  local MARKET="$BRAIN_DIR/.claude-plugin/marketplace.json"
+  [ -f "$MARKET" ] || return 0
+  if ! command -v claude > /dev/null 2>&1 || ! command -v jq > /dev/null 2>&1; then
+    warn "  claude or jq not found — skipping mods"
+    return 0
+  fi
+  local name installed mod
+  name=$(jq -r '.name' "$MARKET")
+  if ! claude plugin marketplace list --json 2>/dev/null | jq -e --arg n "$name" 'any(.[]; .name == $n)' > /dev/null; then
+    if claude plugin marketplace add "$BRAIN_DIR" > /dev/null 2>&1; then
+      info "  Marketplace: $name → $BRAIN_DIR"
+    else
+      warn "  Couldn't add the $name marketplace — run: claude plugin marketplace add $BRAIN_DIR"
+      return 0
+    fi
+  fi
+  installed=$(claude plugin list --json 2>/dev/null || echo '[]')
+  for mod in $(jq -r '.plugins[].name' "$MARKET"); do
+    echo "$installed" | jq -e --arg id "$mod@$name" 'any(.[]; .id == $id)' > /dev/null && continue
+    if claude plugin install "$mod@$name" --scope user > /dev/null 2>&1; then
+      info "  Mod: $mod (user scope) — new sessions load it; /reload-plugins for this one"
+    else
+      warn "  Couldn't install mod $mod — run: claude plugin install $mod@$name --scope user"
+    fi
+  done
+}
+
+uninstall_mods() {
+  local MARKET="$BRAIN_DIR/.claude-plugin/marketplace.json"
+  [ -f "$MARKET" ] && command -v claude > /dev/null 2>&1 && command -v jq > /dev/null 2>&1 || return 0
+  local name mod
+  name=$(jq -r '.name' "$MARKET")
+  for mod in $(jq -r '.plugins[].name' "$MARKET"); do
+    claude plugin uninstall "$mod@$name" --scope user > /dev/null 2>&1 && info "  Removed mod: $mod"
+  done
+  claude plugin marketplace remove "$name" > /dev/null 2>&1 && info "  Removed marketplace: $name"
+  return 0
+}
+
 # ── Claude Code ───────────────────────────────────────────────────────────────
 install_claude_code() {
   info "Installing into Claude Code..."
@@ -196,6 +240,8 @@ install_claude_code() {
     warn "  jq not found — skipping settings.json merge. Install jq to enable this."
   fi
 
+  install_mods
+
   info "Claude Code install complete."
 }
 
@@ -253,6 +299,8 @@ install_cursor() {
 # ── Uninstall ─────────────────────────────────────────────────────────────────
 uninstall() {
   info "Uninstalling brain resources..."
+
+  uninstall_mods
 
   # Remove the universal-rules import block from ~/.claude/CLAUDE.md (keep the rest)
   if [ -f "$HOME/.claude/CLAUDE.md" ] && grep -qF "<!-- brain:universal-rules" "$HOME/.claude/CLAUDE.md"; then

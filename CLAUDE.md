@@ -21,6 +21,7 @@ Brain is a modular LLM resource suite — a vault of workflow skills, rules, hoo
 | `universal/rules.md` | Always-on behavior rules — imported into every Claude Code session via `~/.claude/CLAUDE.md` (managed block) and mirrored for Cursor in `.cursor/rules/universal.mdc` |
 | `universal/hooks/` | Hook infrastructure — examples and active scripts |
 | `domains/` | Domain-specific rules (ml, frontend, research, systems) |
+| `mods/` | Claude Code mods (function-hook plugins), e.g. `model-router`. Listed in `.claude-plugin/marketplace.json`; install.sh installs each at user scope |
 | `install/install.sh` | Wires brain globally into Claude Code and Cursor |
 | `BRAINSTORM.md` | Living design doc — decisions, structure, open questions |
 
@@ -48,6 +49,15 @@ The operative file is in `.claude/commands/<name>.md`. The corresponding spec is
 1. Create `domains/<name>/rules.md` with domain-specific behavior
 2. Create `.cursor/rules/<name>.mdc` for Cursor pickup
 3. Re-run `install/install.sh`
+
+### Adding or editing a mod
+1. Put it in `mods/<name>/` (`.claude-plugin/plugin.json`, `hooks/hooks.json`, `hooks/register.ts`)
+2. Add an entry to `.claude-plugin/marketplace.json` with `"source": "./mods/<name>"`
+3. Check it: `claude plugin validate mods/<name>` and `claude plugin test mods/<name>`
+4. Re-run `install/install.sh` to install it at user scope (idempotent)
+
+Installed mods are read from `mods/<name>` itself: after an edit, `/reload-plugins` picks it up, no
+reinstall. Don't commit `mods/*/.claude-plugin/types/` (engine-written, ignored).
 
 ### Adding an agent (subagent)
 1. `cp agents/_template/agent.md agents/personas/<name>.md` (or `agents/background/<name>.md`)
