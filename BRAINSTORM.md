@@ -213,3 +213,12 @@ built against Trip Fairy. Design decisions:
   header into it. Reuses `style.css`'s existing tokens/cards/pills rather than a second
   design system. Responsive down to narrow widths (cards stack, table rows become
   label/value pairs).
+- **2026-10-18 — folded into the Hub + server control.** The standalone page is gone; each
+  project is a Hub route (`#/project/<name>`), laid out actionable-first (servers, checks,
+  test accounts; status collapses to chips; tracker to counts + "waiting on you"). New
+  `.brain/services.json` declares what the dashboard may run — name-addressed only, secrets
+  injected by name, destructive actions need a server-enforced typed confirm. Runs go
+  through `$SHELL -ilc` because the dashboard's PATH lacks fnm's Node. The "float over my
+  terminal" need is met with a Document-PiP pop-out (zero install, Chrome-family only;
+  popup fallback elsewhere) rather than a native panel — revisit a native app only if the
+  strip needs to outlive the browser.

@@ -85,9 +85,37 @@ Copies mirror their source (a deleted/renamed original is pruned on next sync). 
 plain markdown, so pointing an Obsidian vault at `brain/artifacts/` gives a browsable library.
 
 ## Dev dashboard (per-project status + resources)
-One page per project answering "how is the app doing / where are its resources" —
-`web/devdash.html` (project picker + `?project=<name>` deep link), backed by
-`GET /api/devdash/{name}`.
+One view per project inside the Hub — click a row in **Projects**, or deep-link
+`/#/project/<name>` — backed by `GET /api/devdash/{name}` (status) and
+`GET /api/devdash/{name}/runner` (servers + actions).
+
+**Servers & actions** — each project declares what the dashboard may run at
+`<project_root>/.brain/services.json` (schema + runner: `dashboard/services.py`):
+```json
+{
+  "services": [{"name": "web", "command": "npm run dev", "port": 5173}],
+  "actions":  [{"name": "smoke", "group": "tests", "command": "npm run smoke", "needs": ["web"]},
+               {"name": "teardown test users", "group": "test-users", "command": "npm run test-users -- --teardown",
+                "env": {"SUPABASE_URL": "https://…"}, "secrets": ["SUPABASE_SECRET_KEY"], "confirm": "teardown"}]
+}
+```
+- Requests name an entry; only commands from this file run — the browser never sends a command.
+- Actions can take form fields via `params` (`number` with min/max, `text` with pattern/maxlen/upper,
+  `select` with options; optional `flag` like `--credits`). Values are validated server-side and
+  appended as separate argv items through `"$@"`, never spliced into the shell string. Display
+  metadata: `label`, `group` (list heading), `icon`, `description`.
+- `secrets` are injected by name from the secrets store (env var or `secrets.json`); a missing
+  secret disables the action with a hint. `confirm` is a typed word enforced server-side.
+- Commands run via your interactive shell (`$SHELL -ilc`) so fnm's Node resolves — the
+  dashboard's own PATH doesn't have it (and holds a stale `/usr/local/bin/node`).
+- Each run is a process group; Stop takes down `npm` and its server. A server already
+  listening on its port (e.g. started in a terminal) shows as **external** and needs a
+  confirm to stop. `git pull --ff-only` is built in. Logs/state: `~/.claude/brain-dashboard/runs/`.
+
+**Pop-out control strip** — "Pop out ⧉" opens a compact, always-on-top window (Chrome's
+Document Picture-in-Picture) with servers, checks, test users, git, waiting-on-you and
+links, so it can float over your terminal. Browsers without PiP get a plain popup of
+`/#/strip/<name>` instead (not always-on-top). Closing the Hub tab closes a PiP strip.
 
 **Resources** — each project declares its external services at
 `<project_root>/.brain/resources.json` (schema + loader: `dashboard/resources.py`). No

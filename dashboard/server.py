@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import data, devstatus, projects as projects_mod, registry, resources as resources_mod, testusers as testusers_mod, tracker
+from . import data, devstatus, projects as projects_mod, registry, resources as resources_mod, services as services_mod, testusers as testusers_mod, tracker
 from .process_manager import ProcessManager, SpawnError
 from .voice_bridge import VoiceBridge
 
@@ -291,6 +291,73 @@ async def devdash_test_credentials(name: str):
     if root is None:
         return JSONResponse({"error": "unknown project"}, status_code=404)
     return JSONResponse({"users": testusers_mod.credentials(root)})
+
+
+# ── per-project servers + actions (dashboard/services.py) ──────────────────────
+# Requests name a declared entry; the command itself only ever comes from the project's
+# own .brain/services.json. Blocking process work runs off the event loop.
+class RunReq(BaseModel):
+    confirm: str | None = None
+    external: bool = False
+    args: dict[str, str | int | None] | None = None
+
+
+def _runner(name: str):
+    root = _project_root(name)
+    return (root, services_mod.load(root)) if root else (None, None)
+
+
+@app.get("/api/apps")
+async def apps_summary():
+    """Per-app live counts for the nav rail: servers up and scripts running."""
+    def collect():
+        out = []
+        for n, root in data._project_roots():
+            st = services_mod.status(n, services_mod.load(root))
+            out.append({"name": n,
+                        "servers_up": sum(s["state"] in ("running", "starting", "external") for s in st["services"]),
+                        "servers_total": len(st["services"]),
+                        "scripts_running": sum(a["state"] == "running" for a in st["actions"])})
+        return out
+    return JSONResponse(await asyncio.to_thread(collect))
+
+
+@app.get("/api/devdash/{name}/runner")
+async def runner_status(name: str):
+    root, decl = _runner(name)
+    if root is None:
+        return JSONResponse({"error": "unknown project"}, status_code=404)
+    st = await asyncio.to_thread(services_mod.status, name, decl)
+    return JSONResponse({"declared": decl["declared"], "problems": decl["problems"], **st})
+
+
+@app.post("/api/devdash/{name}/{kind}/{item}/{op}")
+async def runner_op(name: str, kind: str, item: str, op: str, req: RunReq):
+    root, decl = _runner(name)
+    if root is None:
+        return JSONResponse({"error": "unknown project"}, status_code=404)
+    ops = {
+        ("services", "start"): lambda: services_mod.start_service(name, root, decl, item),
+        ("services", "stop"): lambda: services_mod.stop_service(name, decl, item, req.external),
+        ("services", "restart"): lambda: services_mod.restart_service(name, root, decl, item, req.external),
+        ("actions", "run"): lambda: services_mod.run_action(name, root, decl, item, req.confirm, req.args),
+        ("actions", "stop"): lambda: services_mod.stop_action(name, decl, item),
+    }
+    fn = ops.get((kind, op))
+    if fn is None:
+        return JSONResponse({"error": f"unknown operation {kind}/{op}"}, status_code=404)
+    try:
+        return JSONResponse({"ok": True, **(await asyncio.to_thread(fn) or {})})
+    except services_mod.RunError as e:
+        return JSONResponse({"error": str(e)}, status_code=e.status)
+
+
+@app.get("/api/devdash/{name}/log/{kind}/{item}")
+async def runner_log(name: str, kind: str, item: str, lines: int = 80):
+    singular = {"services": "service", "actions": "action"}.get(kind)
+    if _project_root(name) is None or singular is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"log": services_mod.log_tail(name, singular, item, min(max(lines, 1), 400))})
 
 
 @app.get("/api/tasks")
