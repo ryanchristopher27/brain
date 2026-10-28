@@ -1,0 +1,7 @@
+{
+  "services": [
+    {"name": "voice", "label": "Voice daemon", "port": 8765,
+     "description": "Push-to-talk (right Option) → whisper → headless claude -p. Off: nothing listens, so Wispr Flow types only into the focused window.",
+     "command": "./voice/.venv/bin/python -u -m voice.daemon"}
+  ]
+}

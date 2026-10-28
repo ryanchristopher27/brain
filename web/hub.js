@@ -1220,9 +1220,47 @@ function buildDock() {
   const drawerBtn = el("button", "drawer-btn", drawerOpen ? "HIDE ▾" : "TRANSCRIPT ▴");
   drawerBtnEl = drawerBtn;
   drawerBtn.onclick = toggleDrawer;
-  dockEl.append(mic, starfield, rmeta, vtoggle, drawerBtn);
+  dockEl.append(mic, starfield, rmeta, daemonSwitch(), vtoggle, drawerBtn);
   dockEl._meta = rmeta;
   return dockEl;
+}
+// On/off for the voice daemon process itself — declared as brain's "voice" service, so it
+// runs through the same runner as app servers. Off means no global hotkey is listening.
+const DAEMON = { project: "brain", service: "voice" };
+function daemonSwitch() {
+  const wrap = el("div", "dsw");
+  const sw = el("button", "sw"); sw.type = "button"; sw.setAttribute("role", "switch");
+  sw.append(el("span", "sw-k"));
+  wrap.append(sw, el("span", "dsw-l", "DAEMON"));
+  let svc = null;
+  const paint = (busy) => {
+    const on = !!svc && LIVE.includes(svc.state);
+    sw.className = "sw" + (on ? " on" : "") + (busy ? " busy" : "");
+    sw.setAttribute("aria-checked", String(on));
+    sw.setAttribute("aria-label", `Voice daemon ${on ? "on" : "off"}`);
+    sw.disabled = busy || !svc || svc.state === "conflict";
+    sw.title = !svc ? "Voice daemon isn't declared" : busy ? "Working…"
+      : svc.state === "conflict" ? `Port ${svc.port} is held by another app`
+      : on ? "Daemon on — click to stop it so Wispr goes straight to your focused window" : "Daemon off — click to start push-to-talk";
+  };
+  const refresh = async () => {
+    try { svc = (await api(`/api/devdash/${enc(DAEMON.project)}/runner`)).services.find((s) => s.name === DAEMON.service) || null; }
+    catch { svc = null; }
+    paint(false);
+  };
+  sw.onclick = async () => {
+    const on = LIVE.includes(svc.state), ext = svc.state === "external";
+    if (ext && !confirm("The voice daemon was started in a terminal. Stop it?")) return;
+    paint(true);
+    try {
+      await api(`/api/devdash/${enc(DAEMON.project)}/services/${DAEMON.service}/${on ? "stop" : "start"}`,
+        { method: "POST", body: JSON.stringify({ external: ext }) });
+      setVoiceMode(on ? "wispr" : "daemon");
+    } catch (e) { alert(e.message); }
+    await refresh();
+  };
+  paint(true); refresh();
+  return wrap;
 }
 function wireDock() { setVoiceMode(voiceMode); setDockLive(voiceMode === "daemon" && voiceState === "listening"); }
 function setDockLive(live) {

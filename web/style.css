@@ -535,3 +535,8 @@ a.res-link:hover { border-color: var(--bd-hover); color: var(--tx); }
   .tiles { grid-template-columns: repeat(2, 1fr); }
   .two, .usage-cols, .orch .cols { grid-template-columns: 1fr; }
 }
+
+/* voice daemon on/off in the Command dock */
+.dock .dsw { display: inline-flex; align-items: center; flex: none; margin-right: -4px; }
+.dock .dsw-l { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; color: var(--faint); }
+.dock .dsw:has(.sw.on) .dsw-l { color: var(--v-tx2); }
