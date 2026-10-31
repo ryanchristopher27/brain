@@ -1265,3 +1265,225 @@ prompt instructs the AI to call the tracker CLI to upsert tasks from that conten
 - Structure clear: ✅ CLI + per-command "task sync" sections.
 - Entry points: ✅ `dashboard/tracker_cli.py`; the four command files.
 - **v1 slice = W1–W3.** Open Qs are minor (safe defaults). W1 (source+CLI) is the keystone.
+
+---
+
+# Plan — Agent Harness (multi-agent teams on Claude Code)
+Date: 2026-10-31
+Status: Draft
+Brainstorm: inline (grounding Q&A 2026-10-31; builds on the Fleet + Dashboard + Tracker plans above)
+
+## Overview
+Turn brain's one-shot fleet runs into a **standing team of named, long-lived agents** that
+message each other, work your projects, and are watched and steered from the Hub. Two kinds of
+agent: **workflow agents** (one per phase — brainstorm, plan, build, review, reflect) and
+**project experts** (one per app, primed on that project's docs, tasks and memory). They support
+all four patterns: plan→build→review pipelines, debate/second opinion, a standing team per
+project that pulls tracker tasks, and read-only research swarms with a lead.
+
+What exists and is reused: persona files + install sync (`agents/`), `process_manager.py`
+(spawn, confinement, approvals, audit, kill-group), `registry.py` (runs + cost, SQLite WAL), the
+tracker (tasks as the unit of work), the services runner, and the Hub's Command view (today a
+mostly-static Orchestrator panel). The new work is a **session runtime**, a **message bus**, a
+**permission gate**, and the **Hub team view**.
+
+## Goals & Success Criteria
+- **G1 — Long-lived agents.** Create a named agent (role, project, scope, model, budget); it keeps
+  its context across many turns and survives a dashboard restart (resume by session id).
+  ✅ when a planner remembers a decision from 20 turns earlier after a restart.
+- **G2 — Agents talk freely, with limits.** Any agent can message any other; every message lands
+  in one log. ✅ when a planner→builder→reviewer loop completes a tracker task with no human
+  relay, and a deliberately looping pair is stopped by the cap.
+- **G3 — Scoped autonomy.** Builders edit freely inside their assigned folder; anything outside,
+  `git push`, and destructive commands wait for you in the Hub. ✅ when an out-of-scope write is
+  held for approval (probe-verified, not assumed).
+- **G4 — Watch and steer.** One Hub view: roster with live status, conversation timeline, message
+  any agent, pause/stop, approvals, spend per agent. ✅ when a whole session is run from the Hub.
+- **G5 — Bounded cost.** Per-agent budget and per-thread turn cap enforced centrally; spend visible.
+
+## Scope
+### In Scope
+- Session runtime for long-lived agents (start, message, pause, resume, stop).
+- Message bus (agent↔agent, you↔agent) + persisted conversation log.
+- Permission gate: scope folders, held actions, write-scope locks so two writers never overlap.
+- Guardrails: budget, turn caps, hop limits, global kill switch.
+- Hub "Team" view in the Command tab.
+- Agent library: workflow agents + per-project experts; create/edit from the Hub.
+- Team templates for the four patterns.
+
+### Out of Scope (v1)
+- Cloud/remote agents (everything runs on this machine).
+- Agents spawning new agents on their own (you or a template creates agents; agents only message).
+- Voice-driven team control (the voice daemon can later become one more "you" input).
+- Cross-machine sync of live state (definitions travel via git; live sessions don't).
+
+## Tech Stack & Architecture
+
+### Recommendation: Python Claude Agent SDK inside the dashboard  ⚠️ needs your confirmation
+`claude-agent-sdk` (PyPI, 0.2.176) installed into `voice/.venv`, driven by the existing FastAPI
+dashboard. Each agent = one long-lived `ClaudeSDKClient`.
+
+Why it fits — each of these is a gap the plain CLI doesn't close:
+- **Long-lived sessions** with programmatic send/receive (no hand-rolled stream-json plumbing).
+- **In-process custom tools** (SDK MCP server) → the bus tools (`send_message`, `list_agents`,
+  `post_update`) run inside the dashboard, so the dashboard sees and routes every message.
+- **Per-action permission callback** (`can_use_tool`) → the scoped-autonomy rule (G3) and
+  write-scope locks become code. The CLI has no equivalent: `--permission-prompt-tool` was absent
+  on 2.1.167, and `--allowed-tools` was probe-shown **not** to confine a persona.
+- **Hooks** for turn counting, budget checks and logging.
+
+Alternatives considered:
+| Option | Verdict |
+|--------|---------|
+| Raw `claude -p --input-format stream-json` subprocesses (extend `process_manager.py`) | **Fallback.** Verified to exist on 2.1.289, no new dependency — but bus tools need a separate MCP server process, and per-action permission needs workarounds. Use only if H0 fails. |
+| Native background agents (`claude --bg` + built-in `SendMessage`/`ListAgents`) | **Ruled out as the core.** Least code, but there is no CLI command to inject a message into a background session from outside, so the Hub can't message agents, enforce caps, or reliably log. Revisit if Claude Code adds one. |
+| TypeScript Agent SDK as a separate service | Ruled out — second runtime next to the Python dashboard for no gain. |
+
+### Shape
+```
+Hub (web/) ──HTTP/WS──▶ dashboard/server.py
+                          └─ dashboard/harness/
+                               runtime.py   AgentSession: ClaudeSDKClient per agent; start/send/pause/resume/stop
+                               bus.py       in-process MCP tools + routing + inbox queues + caps
+                               gate.py      can_use_tool: scope check, held actions, scope locks
+                               store.py     SQLite (same DB style as registry.py): agents, threads, messages, holds
+                               library.py   load agent definitions (brain agents/ + project .brain/agents/)
+```
+- **Definitions live in git, live state lives at home.** Workflow agents: `agents/workflow/*.md`
+  in brain. Project experts: `<project>/.brain/agents/*.md` (travels with the repo, like tasks).
+  Session ids, messages, spend: `~/.claude/brain-dashboard/harness.db`.
+- **Delivery model.** A message to a busy agent is queued and delivered as its next turn; an idle
+  agent wakes on delivery. Each message carries a thread id and hop count.
+- **Tracker stays the unit of work.** Agents claim tasks, post updates and move status through
+  the existing tracker API (agents may reach `review`, never `done` — unchanged rule).
+- **Model routing.** Each agent pins its own model/effort. The `model-router` mod must not
+  override harness sessions (see Risks).
+
+## Milestones
+| # | Milestone | Description | Dependencies |
+|---|-----------|-------------|--------------|
+| H0 | SDK spike | Install `claude-agent-sdk`; probe: long-lived client with a brain persona + per-agent model, subscription auth, in-process tool call, `can_use_tool` blocking an out-of-scope write, budget stop, resume after restart, router-mod interaction. Go/no-go vs stream-json fallback | — |
+| H1 | Session runtime + store | `harness/runtime.py` + `store.py`: create/start/send/pause/resume/stop named agents; persist roster, session ids, messages, spend; endpoints under `/api/harness/*`; events onto the existing hub websocket | H0 |
+| H2 | Message bus | `bus.py`: `send_message(to, text, thread?)`, `list_agents()`, `post_update(task?)` tools; inbox queue + wake-on-delivery; thread ids, hop counts; per-thread turn cap and per-agent budget enforced centrally | H1 |
+| H3 | Permission gate | `gate.py`: free edits inside scope folders; outside-scope writes, `git push`, destructive commands → held for Hub approval (reuse D8 approval pattern); write-scope locks; global kill switch; audit to `audit.jsonl` | H1 |
+| H4 | Hub Team view | Command view becomes the team surface: roster lanes (status, model, spend), conversation timeline, composer to message any agent, pause/stop, approvals inbox, create-agent form | H1, H2, H3 |
+| H5 | First team end-to-end | Planner (Opus) + builder (cheaper model) + reviewer on one project: takes a tracker task to `review` with no human relay; loop-cap and out-of-scope probes pass | H2, H3, H4 |
+| H6 | Agent library | Workflow agents (one per phase, wrapping the existing commands' intent) + project experts seeded from each project's CLAUDE.md, docs, tasks and memory; create/edit definitions from the Hub | H5 |
+| H7 | Team templates | One-click teams for the four patterns: pipeline, debate, standing project team (pulls tracker backlog), research swarm with lead | H6 |
+
+## Risks & Mitigations
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| Runaway loops / spend from free messaging | High | High | Per-thread turn cap, hop count, per-agent budget, global kill switch — all enforced in the bus, not by prompt. H5 includes a deliberate loop probe |
+| Permission gate leaks (assumed confinement that isn't real) | Med | High | Probe in H0 and H5, as with D8. Never rely on `--allowed-tools`; gate every tool call in `can_use_tool` and keep the `--add-dir` confinement as a second layer |
+| `model-router` mod rewrites harness agents' models | High | Med | H0 checks it; fix by having the router skip when a harness env flag is set (or load harness sessions without user plugins) |
+| SDK auth or version drift vs installed CLI | Med | Med | H0 verifies subscription auth; pin the SDK version; stream-json fallback kept documented |
+| Context bloat in long-lived agents | Med | Med | Rely on Claude Code auto-compaction; agents post durable state to tracker tasks so a fresh session can rebuild |
+| Two writers editing the same files | Low (with locks) | High | Write-scope locks in the gate: a scope can be held by one writer at a time |
+| Concurrency vs existing fleet runs | Med | Low | Share one concurrency budget with `process_manager` (`MAX_CONCURRENT`) |
+
+## Dependencies
+- `claude-agent-sdk` (Python, PyPI) → `voice/.venv` (pending H0 go).
+- Claude Code CLI ≥ 2.1.289 (installed).
+- Existing: `dashboard/` server + websocket hub, `registry.py`, `process_manager.py` approval pattern, tracker API, `agents/` personas.
+
+## Open Questions
+1. **Confirm the SDK recommendation** (vs the stream-json fallback). Blocks H1.
+2. Default models per role: planner Opus 5.5 / builder Sonnet 5.5 / reviewer Sonnet 5.5 / scouts Haiku 5.5? (proposed)
+3. Default caps: per-agent budget (proposed $2/day), per-thread turn cap (proposed 20), hop limit (proposed 8)?
+4. Should idle project experts stay running, or stop when idle and resume on a new message? (proposed: stop when idle and resume by session id — no cost while idle)
+
+## Decisions Log
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Agent topology | Free messaging, with limits | User choice; limits enforced centrally make it safe | 2026-10-31 |
+| Writer autonomy | Free inside a scoped folder; outside-scope, push, destructive → Hub approval | User choice; matches how the work actually flows, keeps irreversible actions human-gated | 2026-10-31 |
+| Use cases | All four patterns (pipeline, debate, standing team, research swarm) | User choice; drives workflow agents + project experts + templates | 2026-10-31 |
+| Message bus owner | Dashboard-owned (in-process tools), not native SendMessage | No external injection into native background sessions → Hub couldn't message, cap or log | 2026-10-31 |
+| Runtime | Python Agent SDK (pending H0 + confirmation) | Long-lived clients, in-process tools, per-action permission callback | 2026-10-31 |
+| Definitions vs state | Definitions in git (brain `agents/workflow/`, project `.brain/agents/`); live state in `~/.claude/brain-dashboard/harness.db` | Same split as the tracker: what should travel goes in git, runtime churn stays local | 2026-10-31 |
+| Agents creating agents | Out of scope for v1 | Keeps cost and topology predictable; templates cover the need | 2026-10-31 |
+
+## Handoff Readiness (for /scaffold or /build)
+- Tech decided: ⚠️ pending confirmation of the SDK runtime (H0 spike proves it either way).
+- Structure clear: ✅ `dashboard/harness/` (runtime, bus, gate, store, library); definitions in `agents/workflow/` + `<project>/.brain/agents/`.
+- Entry points: ✅ `dashboard/server.py` (`/api/harness/*`), `web/hub.js` Command view.
+- **First slice = H0 → H1.** H0 is a half-day probe and decides the runtime before anything is built.
+
+## Agent Harness — Revision 1 (2026-10-31)
+
+### Answers folded in
+1. **Runtime: Python Agent SDK — confirmed.** Stream-json stays the documented fallback only.
+2. **Models: defaults accepted, plus per-agent control and dynamic routing.** Every agent has a
+   model setting, editable from the Hub at any time, in one of two modes:
+   - **Pinned** — a fixed model + effort (defaults: planner Opus 5.5, builder/reviewer Sonnet 5.5,
+     scouts Haiku 5.5).
+   - **Auto** — per-turn routing between light / standard / deep tiers, using the same rules +
+     classifier rubric as the `model-router` mod (one shared rubric file, not two copies). Each
+     agent can set its own tier→model map and a floor/ceiling (e.g. a reviewer never below
+     standard). The chosen model and the reason are shown on every turn in the timeline.
+   The harness owns model choice for its sessions; the `model-router` mod skips them.
+3. **Usage: runs on your normal Claude Code account.** The SDK drives the installed `claude` CLI,
+   which is logged in with your claude.ai subscription (checked: `authMethod: claude.ai`, no
+   `ANTHROPIC_API_KEY` in the environment). So agent work counts against your plan's usage
+   limits, not a separate API bill. Consequences:
+   - The harness must **never set `ANTHROPIC_API_KEY`** for agent sessions — that would silently
+     switch them to API billing. H0 verifies the SDK picks up the subscription login; the session
+     runtime strips the variable defensively.
+   - **Budgets become usage guardrails**, not money: the SDK's reported cost is a dollar-equivalent
+     measure of usage. Caps protect your weekly limit from a runaway team. The Hub shows team usage
+     beside the weekly-limit meter already in the rail.
+4. **Idle agents: stop when idle, resume on demand.** An idle agent's process is closed after a
+   short idle window (proposed 10 min); its session id is kept, and the next message resumes it
+   with full context. No usage or memory while idle; long-lived in behaviour, not in process.
+
+### Milestone changes
+| # | Change |
+|---|--------|
+| H0 | Also verify: subscription auth through the SDK; switching model mid-session (else resume with a new model per turn); router mod skips harness sessions |
+| H1 | Adds the per-agent model setting (pinned / auto, tier map, floor/ceiling) and idle stop + resume |
+| H2 | Adds auto routing per delivered turn (shared rubric with `model-router`) |
+| H4 | Adds a model control on each roster lane and the per-turn model/reason in the timeline; team usage next to the weekly-limit meter |
+
+### Decisions Log (additions)
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Runtime | Python Agent SDK (confirmed) | User confirmed; H0 still proves it | 2026-10-31 |
+| Model control | Per-agent pinned or auto, editable live from the Hub | User wants adjustable + dynamic models | 2026-10-31 |
+| Routing logic | Reuse `model-router`'s rules + rubric via one shared file | One source of truth for "how hard is this" | 2026-10-31 |
+| Billing | Subscription via the CLI's claude.ai login; never pass an API key | User wants it on their normal account | 2026-10-31 |
+| Caps | Usage guardrails (dollar-equivalent), not spend | Subscription isn't billed per call; caps protect the weekly limit | 2026-10-31 |
+| Idle agents | Stop after idle window, resume by session id | No usage while idle, same context on return | 2026-10-31 |
+
+### Open questions (remaining)
+- Idle window length (proposed 10 min) and default caps ($2-equivalent/day per agent, 20 turns per
+  thread, hop limit 8) — fine to tune after H5.
+
+## Agent Harness — H0 results (2026-10-31): GO on the Python Agent SDK
+`claude-agent-sdk==0.2.176` in `voice/.venv` (pinned in `voice/requirements.txt`). Probe suite:
+`./voice/.venv/bin/python -m dashboard.harness.probe_sdk` — **9/9 pass**; re-run after SDK or
+Claude Code upgrades.
+
+| Probe | Result |
+|-------|--------|
+| auth | Runs on the claude.ai subscription (`apiKeySource: none`); `ANTHROPIC_API_KEY` stripped from session env |
+| persona | `extra_args={"agent": "scout"}` gives the read-only tool set |
+| pinned-model | Session runs on the model it's given |
+| bus-tool | In-process MCP tool (`send_message`) is called and the dashboard sees the arguments |
+| gate | `can_use_tool` allowed a write inside scope and blocked one outside (file not created) |
+| set-model | `client.set_model()` switches model mid-session — auto routing can switch per turn without a restart |
+| resume | A fresh client with `resume=<session_id>` recalls earlier context — idle stop + resume works |
+| budget | `max_budget_usd` ends the session with `error_max_budget_usd` |
+| router-skip | Passes only with the fix below |
+
+Findings that change the build:
+- **The `model-router` mod loads inside SDK sessions and overrode both the pinned model and
+  `set_model()`** (a pinned Haiku session ran on Opus). Fix, no mod change needed: harness
+  sessions pass `settings={"enabledPlugins": {"model-router@brain": false}}`. H1 bakes this in.
+- **`allowed_tools` entries bypass `can_use_tool`** (the SDK warns: a whole-tool allow
+  auto-approves before the callback). The gate must either keep gated tools out of
+  `allowed_tools` or enforce via a `PreToolUse` hook. H3 uses the hook so no allow rule
+  (including ones in settings files) can shadow it.
+- The SDK runs its own bundled CLI (2.1.316), not the installed 2.1.289. Auth and `~/.claude`
+  config are shared, so this is fine; note it when debugging version-specific behaviour.
+- Probe cost was a few cents of usage-equivalent on Haiku/Sonnet.

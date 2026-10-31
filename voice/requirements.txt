@@ -19,3 +19,4 @@ tomli>=2.0; python_version < "3.11"
 # --- dashboard (Pillar C v2) ---
 fastapi>=0.110
 uvicorn>=0.29
+claude-agent-sdk==0.2.176   # dashboard/harness (agent sessions)
