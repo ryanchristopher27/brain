@@ -382,7 +382,7 @@ class Harness:
         a = self._agent(name)
         s = self.sessions.get(name)
         model, tier = resolve_model(a["model"])
-        return {**{k: a[k] for k in ("name", "persona", "project", "brief", "scope", "model", "limits", "always", "paused",
+        return {**{k: a[k] for k in ("name", "persona", "project", "brief", "scope", "scope_root", "model", "limits", "always", "paused",
                                      "usage_usd", "session_id")},
                 "usage_today": round(store.usage_since(self.conn, name, day_start()), 4),
                 "state": s.state(a) if s else ("paused" if a["paused"] else ("asleep" if a["session_id"] else "new")),

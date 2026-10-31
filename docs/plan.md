@@ -1551,3 +1551,24 @@ Findings that change the build:
   hold path is covered by the tests (same code path as the command hold) rather than live.
 - Fixed during H3: test runs were writing to the real audit log; the audit sink is now injectable and
   tests use their own. Entries from three earlier test runs remain in the real log (not removed).
+
+## Agent Harness — H4 done (2026-10-31): Hub Team view
+- **Placement deviation:** a dedicated **Team** view (sidebar, TOOLS) rather than rebuilding Command.
+  A long-lived conversation needs the full-height list/detail layout the app dashboards use; Command
+  keeps the voice dock and pipeline.
+- **Bar:** agents / working / used-today pills, "waiting on you" when holds are pending, New agent,
+  Stop everything (kill switch, with confirm).
+- **Approvals:** one card per pending hold (agent, kind, exact command or path, reason) with Allow,
+  Always allow (plain commands only) and Deny. Push and destructive holds are tinted red.
+- **Roster lanes:** state dot (pulses while working, amber when waiting), persona, model or "auto",
+  usage today vs the daily cap, queued count.
+- **Agent detail:** state badge, Pause/Resume, Put to sleep (close process, resume on next message),
+  Delete; "Model and limits" (pinned model, or auto with never-below/never-above; effort; daily cap);
+  conversation timeline (you, teammates with hand-off number, agent replies with model / route / cost
+  chips, tool calls, gate notes); composer (Enter sends).
+- **Live:** harness websocket events update lanes, header and timeline without redrawing forms; a
+  15 s poll backs them up. Sidebar shows the team count or "N waiting"; the rail shows TEAM TODAY usage
+  under the weekly limit.
+- Verified in the browser against real Haiku agents: create from the form, message and watch the
+  reply stream in, approve a held command from its card, switch a builder to auto with a ceiling,
+  Stop everything (denied the waiting hold, paused both), delete from the UI. No console errors.

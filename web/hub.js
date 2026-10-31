@@ -62,6 +62,7 @@ const VIEWS = {
   board:      { label: "Board",      sec: "WORKSPACE", title: "Board", sub: "Tasks across every project · drag to move, or say “move it to done”" },
   artifacts:  { label: "Artifacts",  sec: "WORKSPACE", title: "Artifacts" },
   projects:   { label: "All apps",   sec: "APPS", title: "Apps", sub: "Everything you have going, across chat and Claude Code" },
+  team:       { label: "Team",       sec: "TOOLS", title: "Team", sub: "Long-lived agents that message each other · approve what they can't do alone" },
   command:    { label: "Command",    sec: "TOOLS", title: "Command", sub: "Orchestrator moving work through brainstorm, plan, build, review, ship · talk to it below" },
   connectors: { label: "Connectors", sec: "TOOLS", title: "Connectors", sub: "MCP servers and integrations available to every session" },
   usage:      { label: "Usage",      sec: "ACCOUNT", title: "Usage", sub: "Current billing period" },
@@ -1136,6 +1137,328 @@ async function popOut(name) {
   pip.addEventListener("pagehide", stop);
 }
 
+// ── team (agent harness) ──────────────────────────────────────────────────────
+// Long-lived agents from dashboard/harness. Live updates arrive on the hub websocket as
+// {type:"harness"} events (re-dispatched as a "harness" DOM event); a slow poll backs them up.
+// Forms (composer, settings, new agent) are built once per selection so events never wipe typing.
+const MODELS = [["claude-opus-5-5", "Opus 5.5"], ["claude-sonnet-5-5", "Sonnet 5.5"], ["claude-haiku-5-5", "Haiku 5.5"]];
+const modelName = (id) => (MODELS.find(([m]) => m === id) || [id, id])[1];
+const AGENT_STATE = {
+  new: ["Not started", "off"], asleep: ["Asleep · wakes on a message", "off"], live: ["Ready", "ok"],
+  busy: ["Working", "ok"], waiting: ["Needs your approval", "warn"], paused: ["Paused", "off"],
+};
+const HOLD_KIND = { "outside-scope write": "Write outside its folder", command: "Run a command",
+  "destructive command": "Destructive command", "git push": "Push to remote", tool: "Use a tool" };
+const money = (n) => "$" + (n || 0).toFixed(n >= 1 ? 2 : 3);
+
+function agentBadge(a) {
+  const [txt, tone] = AGENT_STATE[a.state] || [a.state, "off"];
+  const b = el("span", "badge " + tone);
+  b.append(el("span", "bdot" + (a.state === "busy" ? " pulse" : "")), el("span", null, txt));
+  return b;
+}
+function opt(sel, value, label, cur) {
+  const o = el("option", null, label); o.value = value; if (value === cur) o.selected = true; sel.append(o);
+}
+function selectFld(label, options, cur, onChange) {
+  const lab = el("label", "fld");
+  lab.append(el("span", "fld-l", label));
+  const s = el("select");
+  options.forEach(([v, l]) => opt(s, v, l, cur));
+  s.onchange = () => onChange(s.value);
+  lab.append(s);
+  return lab;
+}
+
+function mountTeam(root) {
+  const T = { agents: [], holds: [], sel: null, drawn: undefined, creating: false, seen: new Set(), personas: [], projects: [] };
+  try { T.sel = localStorage.getItem("teamsel"); } catch {}
+  root.className = "appv team";
+  const bar = el("div", "appv-bar"), holds = el("div", "tm-holds"), body = el("div", "appv-body");
+  const list = el("div", "appv-list"), detail = el("section", "appv-detail tm-detail");
+  body.append(list, detail);
+  root.append(bar, holds, body);
+  let head, log, settings;
+
+  const agent = () => T.agents.find((a) => a.name === T.sel);
+  const call = async (path, method = "POST", bodyObj) => {
+    try { return await api(path, { method, body: bodyObj ? JSON.stringify(bodyObj) : undefined }); }
+    catch (e) { winOf(root).alert(e.message); return null; }
+  };
+
+  function drawBar() {
+    bar.innerHTML = "";
+    const working = T.agents.filter((a) => a.state === "busy").length;
+    const today = T.agents.reduce((s, a) => s + (a.usage_today || 0), 0);
+    const pill = (ic, b, v, tone) => { const p = el("span", "pill2" + (tone ? " " + tone : "")); p.append(icon(ic, 14), el("b", null, b), el("span", "pv", v)); return p; };
+    const pills = el("div", "pills");
+    pills.append(pill("users", String(T.agents.length), T.agents.length === 1 ? "agent" : "agents"),
+      pill("pulse", String(working), "working"), pill("chart", money(today), "used today"));
+    if (T.holds.length) pills.append(pill("alert", String(T.holds.length), "waiting on you", "warn"));
+    bar.append(pills, el("span", "grow"),
+      btn("New agent", { kind: "primary", icon: "users", onClick: () => { T.creating = true; drawDetail(); drawRoster(); } }),
+      btn("Stop everything", { kind: "danger", icon: "ban", disabled: !T.agents.length,
+        title: "Deny everything waiting, pause every agent, stop running turns",
+        onClick: async () => {
+          if (!winOf(root).confirm("Stop everything? Pending approvals are denied and every agent is paused.")) return;
+          await call("/api/harness/kill"); refresh();
+        } }));
+  }
+
+  function drawHolds() {
+    holds.innerHTML = "";
+    T.holds.forEach((h) => {
+      const card = el("div", "tm-hold" + (/destructive|push/.test(h.kind) ? " hot" : ""));
+      const what = h.input.command || h.input.file_path || h.input.notebook_path || JSON.stringify(h.input).slice(0, 160);
+      const txt = el("div", "tm-hold-t");
+      const top = el("div", "tm-hold-h");
+      top.append(el("b", null, h.agent), el("span", null, " wants to "), el("span", "tm-kind", (HOLD_KIND[h.kind] || h.kind).toLowerCase()));
+      txt.append(top, el("code", "tm-what", what), el("div", "tm-why", h.reason));
+      const acts = el("div", "dt-acts");
+      const decide = (d, always) => async (e) => {
+        e.currentTarget.disabled = true;
+        await call(`/api/harness/holds/${h.id}/${d}`, "POST", { always: !!always });
+        refresh();
+      };
+      acts.append(btn("Allow", { kind: "primary", icon: "ok", onClick: decide("approve") }));
+      if (h.kind === "command") acts.append(btn("Always allow", { title: `Allow \`${what}\` for ${h.agent} from now on`, onClick: decide("approve", true) }));
+      acts.append(btn("Deny", { kind: "ghost", icon: "x", onClick: decide("deny") }));
+      card.append(icon("alert", 18), txt, acts);
+      holds.append(card);
+    });
+  }
+
+  function drawRoster() {
+    list.innerHTML = "";
+    const g = el("div");
+    g.append(el("h3", "lgroup-h", "Agents"));
+    if (!T.agents.length) g.append(el("p", "lnote", "No agents yet. Create one to start a team."));
+    T.agents.forEach((a) => {
+      const on = !T.creating && a.name === T.sel;
+      const r = el("div", "lrow tm-lane" + (on ? " on" : ""));
+      const main = el("button", "lrow-main");
+      main.type = "button";
+      main.setAttribute("aria-current", on ? "true" : "false");
+      const tone = (AGENT_STATE[a.state] || [0, "off"])[1];
+      const dw = el("span", "tm-dot " + tone); dw.append(el("span", "bdot" + (a.state === "busy" ? " pulse" : "")));
+      const txt = el("span", "tm-lane-t");
+      const cap = (a.limits && a.limits.daily_usd) || 2;
+      txt.append(el("span", "lrow-l", a.name),
+        el("span", "tm-lane-s", `${a.persona} · ${a.model.mode === "auto" ? "auto" : modelName(a.current_model)} · ${money(a.usage_today)} of ${money(cap)}`));
+      main.append(dw, txt);
+      if (a.queued) main.append(el("span", "lrow-m", `${a.queued} queued`));
+      main.onclick = () => selectAgent(a.name);
+      r.append(main);
+      g.append(r);
+    });
+    list.append(g);
+  }
+
+  function selectAgent(name) {
+    T.sel = name; T.creating = false;
+    try { localStorage.setItem("teamsel", name); } catch {}
+    drawRoster(); drawDetail();
+  }
+
+  function drawHead() {
+    const a = agent();
+    if (!a || !head) return;
+    head.innerHTML = "";
+    const top = el("div", "dt-top");
+    const title = el("div", "dt-title");
+    title.append(icon("users", 18), el("h2", null, a.name), agentBadge(a));
+    const acts = el("div", "dt-acts");
+    acts.append(a.paused
+      ? btn("Resume", { icon: "play", onClick: () => call(`/api/harness/agents/${enc(a.name)}/resume`) })
+      : btn("Pause", { icon: "stop", title: "Hold its inbox; the current turn finishes", onClick: () => call(`/api/harness/agents/${enc(a.name)}/pause`) }));
+    acts.append(btn("Put to sleep", { kind: "ghost", icon: "restart", disabled: a.state !== "live",
+      title: "Close its process now; the next message resumes it with full context",
+      onClick: () => call(`/api/harness/agents/${enc(a.name)}/stop`) }));
+    acts.append(btn("Delete", { kind: "ghost", icon: "trash", iconOnly: true, onClick: async () => {
+      if (!winOf(root).confirm(`Delete ${a.name} and its conversation?`)) return;
+      await call(`/api/harness/agents/${enc(a.name)}`, "DELETE"); T.sel = null; refresh();
+    } }));
+    top.append(title, acts);
+    const sub = el("div", "dt-sub");
+    const rel = (s) => (s === a.scope_root ? "the whole project" : s.startsWith(a.scope_root + "/") ? s.slice(a.scope_root.length + 1) : s);
+    sub.textContent = `${a.persona} · ${a.project} · writes in ${a.scope.map(rel).join(", ")}`;
+    head.append(top, sub);
+    if (a.brief) head.append(el("p", "dt-desc", a.brief));
+  }
+
+  function buildSettings(a) {
+    const d = el("details", "tm-set");
+    d.append(el("summary", null, "Model and limits"));
+    const m = { ...a.model }, lim = { ...a.limits };
+    const grid = el("div", "fgrid");
+    const redraw = () => { grid.innerHTML = ""; fill(); };
+    const note = el("p", "fld-h");
+    const fill = () => {
+      note.textContent = m.mode === "auto"
+        ? "Auto picks light, standard or deep for each message with the same rules as the model-router mod."
+        : "Model changes apply from the next message without restarting the agent.";
+      grid.append(selectFld("Model choice", [["pinned", "One model"], ["auto", "Auto, per message"]], m.mode, (v) => { m.mode = v; redraw(); }));
+      if (m.mode === "pinned") grid.append(selectFld("Model", MODELS, m.model, (v) => (m.model = v)));
+      else {
+        const tiers = [["", "No limit"], ["light", "Light"], ["standard", "Standard"], ["deep", "Deep"]];
+        grid.append(selectFld("Never below", tiers, m.floor || "", (v) => (m.floor = v || null)),
+          selectFld("Never above", tiers, m.ceiling || "", (v) => (m.ceiling = v || null)));
+      }
+      grid.append(selectFld("Effort", [["", "Default"], ["low", "Low"], ["medium", "Medium"], ["high", "High"], ["xhigh", "Extra high"], ["max", "Max"]],
+        m.effort || "", (v) => (m.effort = v || null)));
+      grid.append(field({ name: "daily_usd", label: "Daily usage cap ($)", type: "number", min: 0.01, max: 100, required: true },
+        lim.daily_usd ?? 2, (v) => (lim.daily_usd = Number(v))));
+    };
+    fill();
+    const save = btn("Save", { kind: "primary", onClick: async () => {
+      save.disabled = true;
+      const r = await call(`/api/harness/agents/${enc(a.name)}`, "PATCH", { model: m, limits: lim });
+      save.disabled = false;
+      if (r) flash(save, "Saved");
+    } });
+    d.append(grid, note, save);
+    return d;
+  }
+
+  function line(msg) {
+    if (msg.role === "tool") { const l = el("div", "tm-tool"); l.append(icon("terminal", 13), el("span", null, msg.text)); return l; }
+    if (msg.role === "system") {
+      const l = el("div", "tm-sys" + (msg.sender === "gate" ? " gate" : ""));
+      l.append(icon(msg.sender === "gate" ? "lock" : "alert", 13), el("span", null, msg.text));
+      return l;
+    }
+    const mine = msg.role === "user" && msg.sender === "you";
+    const b = el("div", "tm-msg " + (mine ? "you" : msg.role === "user" ? "mate" : "agent"));
+    const meta = el("div", "tm-meta");
+    meta.append(el("b", null, mine ? "You" : msg.role === "user" ? `from ${msg.sender}` : msg.sender));
+    if (msg.role === "user" && msg.hop) meta.append(el("span", "tm-chip", `hand-off ${msg.hop}`));
+    if (msg.role === "assistant") {
+      if (msg.model) meta.append(el("span", "tm-chip", modelName(msg.model)));
+      if (msg.route && msg.route !== "pinned") meta.append(el("span", "tm-chip", msg.route.replace(/^auto: /, "auto · ")));
+      if (msg.cost) meta.append(el("span", "tm-chip", money(msg.cost)));
+    }
+    meta.append(el("span", "tm-ago", ago(msg.ts)));
+    b.append(meta, el("div", "tm-text", msg.text));
+    return b;
+  }
+  function append(msg) {
+    if (!log || T.seen.has(msg.id)) return;
+    T.seen.add(msg.id);
+    log.querySelector(".tm-empty")?.remove();
+    const stick = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+    log.append(line(msg));
+    if (stick) log.scrollTop = log.scrollHeight;
+  }
+
+  function buildComposer(a) {
+    const f = el("form", "tm-compose");
+    const ta = el("textarea");
+    ta.rows = 2; ta.placeholder = `Message ${a.name}…  (Enter to send, Shift+Enter for a new line)`;
+    const send = btn("Send", { kind: "primary", icon: "mail" });
+    send.type = "submit";
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const text = ta.value.trim();
+      if (!text) return;
+      send.disabled = true;
+      const r = await call(`/api/harness/agents/${enc(a.name)}/message`, "POST", { text });
+      send.disabled = false;
+      if (r) { ta.value = ""; append(r); }
+      ta.focus();
+    };
+    ta.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); f.requestSubmit(); } };
+    f.append(ta, send);
+    return f;
+  }
+
+  function buildCreate() {
+    const v = { name: "", persona: "builder", project: (T.projects[0] || {}).name || "", brief: "", scope: ".", model: "claude-sonnet-5-5", daily: 2 };
+    const f = el("form", "dt-form tm-create");
+    f.noValidate = true;
+    const h = el("div", "dt-top");
+    const title = el("div", "dt-title"); title.append(icon("users", 18), el("h2", null, "New agent"));
+    h.append(title);
+    const grid = el("div", "fgrid");
+    grid.append(field({ name: "name", label: "Name", required: true, help: "e.g. planner", maxlen: 32 }, "", (x) => (v.name = x.trim())),
+      selectFld("Persona", T.personas.map((p) => [p.name, `${p.name}${p.read_only ? " (read-only)" : " (can write)"}`]), v.persona, (x) => (v.persona = x)),
+      selectFld("Project", T.projects.map((p) => [p.name, p.name]), v.project, (x) => (v.project = x)),
+      field({ name: "scope", label: "Writes inside", required: true, help: "folders, comma-separated, relative to the project" }, v.scope, (x) => (v.scope = x)),
+      selectFld("Model", MODELS, v.model, (x) => (v.model = x)),
+      field({ name: "daily", label: "Daily usage cap ($)", type: "number", min: 0.01, max: 100, required: true }, v.daily, (x) => (v.daily = Number(x))));
+    const brief = el("label", "fld");
+    const bt = el("textarea"); bt.rows = 3; bt.maxLength = 2000; bt.placeholder = "What this agent is for, e.g. “Breaks tracker tasks into steps and hands them to builder.”";
+    bt.oninput = () => (v.brief = bt.value);
+    brief.append(el("span", "fld-l", "Role (optional)"), bt);
+    const acts = el("div", "dt-acts");
+    const create = btn("Create agent", { kind: "primary", icon: "ok" });
+    create.type = "submit";
+    acts.append(create, btn("Cancel", { kind: "ghost", onClick: () => { T.creating = false; drawRoster(); drawDetail(); } }));
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      create.disabled = true;
+      const r = await call("/api/harness/agents", "POST", { name: v.name, persona: v.persona, project: v.project, brief: v.brief,
+        scope: v.scope.split(",").map((s) => s.trim()).filter(Boolean), model: { model: v.model }, limits: { daily_usd: v.daily } });
+      create.disabled = false;
+      if (r) { T.creating = false; await refresh(); selectAgent(r.name); }
+    };
+    f.append(h, grid, brief, el("p", "fld-h", "Writing agents can't share a folder. Everything outside it — other writes, commands, pushes — waits for your approval here."), acts);
+    return f;
+  }
+
+  async function drawDetail() {
+    detail.innerHTML = ""; head = log = settings = null; T.seen = new Set();
+    T.drawn = T.creating ? "+new" : T.sel;
+    if (T.creating) { detail.append(buildCreate()); detail.querySelector("input")?.focus(); return; }
+    const a = agent();
+    if (!a) { detail.append(el("p", "empty", T.agents.length ? "Pick an agent." : "Create an agent to get started.")); return; }
+    head = el("div", "tm-head");
+    settings = buildSettings(a);
+    log = el("div", "tm-log");
+    log.setAttribute("aria-live", "polite");
+    detail.append(head, settings, log, buildComposer(a));
+    drawHead();
+    const mine = log;
+    const msgs = await api(`/api/harness/agents/${enc(a.name)}/messages`).catch(() => []);
+    if (log !== mine) return;  // a newer drawDetail replaced this one while we waited
+    if (!msgs.length) log.append(el("p", "empty tm-empty", "No messages yet. Say what you'd like it to do."));
+    msgs.forEach(append);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  async function refresh() {
+    const [agents, pending] = await Promise.all([api("/api/harness/agents").catch(() => []), api("/api/harness/holds").catch(() => [])]);
+    T.agents = agents; T.holds = pending;
+    if (!agent() && !T.creating) T.sel = (agents[0] || {}).name || null;
+    drawBar(); drawHolds(); drawRoster();
+    if (T.drawn !== (T.creating ? "+new" : T.sel)) drawDetail(); else drawHead();
+  }
+
+  const onEvent = (e) => {
+    const evt = e.detail;
+    if (evt.event === "agent") {
+      const i = T.agents.findIndex((a) => a.name === evt.agent.name);
+      if (i < 0) return refresh();
+      T.agents[i] = evt.agent; drawBar(); drawRoster(); if (evt.agent.name === T.sel) drawHead();
+    } else if (evt.event === "message") {
+      if (evt.message.agent === T.sel) append(evt.message);
+    } else if (evt.event === "hold" || evt.event === "deleted") refresh();
+  };
+  window.addEventListener("harness", onEvent);
+  (async () => {
+    [T.personas, T.projects] = await Promise.all([api("/api/agents").catch(() => []), api("/api/projects").catch(() => [])]);
+    await refresh();
+  })();
+  const poll = setInterval(refresh, 15000);
+  return () => { clearInterval(poll); window.removeEventListener("harness", onEvent); };
+}
+RENDER.team = async (pane) => {
+  pane.innerHTML = "";
+  pane.classList.add("fill");
+  const root = el("div");
+  pane.append(root);
+  stopActive = mountTeam(root);
+};
+
 // ── voice nucleus + dock ─────────────────────────────────────────────────────
 function nucleus(kind) {
   const n = el("div", "nucleus " + kind); n.dataset.live = "false";
@@ -1340,6 +1663,7 @@ function onEvt(evt) {
       levels.shift(); levels.push(Math.max(0, Math.min(1, Number(evt.value) || 0)));
       if (voiceMode === "daemon" && voiceState === "listening") setDockLive(true);
       break;
+    case "harness": window.dispatchEvent(new CustomEvent("harness", { detail: evt })); break;
     case "transcript":
       if (evt.text) {
         if (evt.role === "assistant") ccLines.push(evt.text);
@@ -1361,7 +1685,11 @@ async function refreshCounts() {
     const [projects, tasks, arts, live] = await Promise.all([api("/api/projects"), api("/api/tasks"),
       api("/api/artifacts").catch(() => ({ items: [] })), api("/api/apps").catch(() => [])]);
     if (projects.map((p) => p.name).join() !== APPS.map((a) => a.name).join()) { APPS = projects; buildNav(); }
-    setNavMeta({ projects: projects.length, board: tasks.length, artifacts: (arts.items || []).length });
+    const team = await api("/api/harness/agents").catch(() => []);
+    const waiting = team.filter((x) => x.state === "waiting").length;
+    setNavMeta({ projects: projects.length, board: tasks.length, artifacts: (arts.items || []).length,
+      team: waiting ? `${waiting} waiting` : team.length || null });
+    $("#team-use").textContent = team.length ? money(team.reduce((n, x) => n + (x.usage_today || 0), 0)) : "—";
     // live indicator per app: green while any of its servers is up, spinning while a script runs
     for (const a of live) {
       const b = document.querySelector(`.nav .item[data-view="project"][data-arg="${CSS.escape(a.name)}"]`);
