@@ -322,6 +322,24 @@ async def test_restart_redelivers_unfinished_turns(tmp):
     assert store.pending_messages(h2.conn) == [] and await h2.recover() == 0
 
 
+@run
+async def test_updates_feed_reports_only_thread_leads(tmp):
+    h, _, _ = make(tmp)
+    await h.create("planner", "scout", "app")
+    await h.create("builder", "builder", "app")
+
+    async def on_turn(client, prompt):
+        if "'planner'" in client.options.system_prompt["append"] and not prompt.startswith("[from"):
+            await bus_call(h, "planner", "send_message", {"to": "builder", "text": "build"})
+    FakeClient.on_turn = on_turn
+    start = store.updates(h.conn, 0)["latest"]
+    await h.send("planner", "plan it")
+    await drain(h, "planner", "builder")
+    feed = store.updates(h.conn, start)
+    assert [m["agent"] for m in feed["messages"]] == ["planner"], feed  # builder's reply stays inside the team
+    assert store.updates(h.conn, feed["latest"])["messages"] == []
+
+
 def test_routing_rules_load():
     from .routing import decide
     assert decide("commit and push it")[:2] == ("light", "git")
@@ -354,6 +372,12 @@ def test_gate_policy():
     assert v("Task", {})[0] == "deny" and v("Agent", {})[0] == "deny"
     assert v("mcp__bus__send_message", {}) == ("allow", "")
     assert v("SomeNewTool", {}) == ("hold", "tool")
+    for secret in ("/p/.env", ".env.local", "/p/.tokens.json", "/Users/me/.ssh/config", "certs/server.pem",
+                   "/Users/me/.claude/brain-dashboard/secrets.json"):
+        assert v("Read", {"file_path": secret})[0] == "deny", secret
+    assert v("Grep", {"pattern": "KEY", "path": ".env"})[0] == "deny"
+    for fine in (".env.example", "src/env.ts", "docs/keys.md", "README.md"):
+        assert v("Read", {"file_path": fine}) == ("allow", ""), fine
 
 
 async def wait_for(pred, n=300):
@@ -494,7 +518,7 @@ async def test_delete_releases_waiting_hold(tmp):
 TESTS = [test_create_validates, test_turn_logs_usage_and_session, test_teammate_prefix_and_serial_inbox,
          test_model_change_switches_live, test_idle_close_then_resume, test_pause_holds_inbox,
          test_delete_stops_and_forgets, test_bus_relays_with_thread_and_hops, test_ping_pong_stops_at_hop_limit,
-         test_daily_cap_parks_message_and_pauses, test_auto_routes_each_turn, test_tracker_tools, test_restart_redelivers_unfinished_turns, test_routing_rules_load,
+         test_daily_cap_parks_message_and_pauses, test_auto_routes_each_turn, test_tracker_tools, test_restart_redelivers_unfinished_turns, test_updates_feed_reports_only_thread_leads, test_routing_rules_load,
          test_resolve_model_auto_clamps, test_gate_policy, test_hold_approve_always_then_auto_allow,
          test_hold_deny_and_expire, test_push_is_never_always_allowed, test_writer_scope_locks, test_kill_switch,
          test_delete_releases_waiting_hold]

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Agent, Ask, Hold } from '../types'
+import type { Agent, Ask, Follow, Hold } from '../types'
 
 // The brain dashboard (dashboard/server.py) hosts the agent harness on localhost. Its token comes
 // from /api/config, which only same-machine callers can reach.
@@ -9,12 +9,13 @@ const BASE = 'http://127.0.0.1:8766'
 const HUB = 'http://localhost:8766/#/team' // the desktop app links only https: and http://localhost
 const PANE = 'team'
 const POLL_MS = 4000
-const ASK_TTL_MS = 30 * 60 * 1000
+const ASK_TTL_MS = 2 * 60 * 60 * 1000 // since the thread's last activity
 
 const agentsAtom = atom({ plugin: 'team', key: 'agents' } as const, [])
 const holdsAtom = atom({ plugin: 'team', key: 'holds' } as const, [])
 const onlineAtom = atom({ plugin: 'team', key: 'online' } as const, false)
 const asksAtom = atom({ plugin: 'team', key: 'asks' } as const, [])
+const followAtom = atom({ plugin: 'team', key: 'follow' } as const, { on: false, after: 0 })
 
 const KIND: Record<string, string> = {
   'outside-scope write': 'write outside its folder',
@@ -64,6 +65,7 @@ function toHold(raw: any): Hold {
 // Polling writes only real changes, so the pane and band don't redraw every few seconds.
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
+// Status for the pane and band: safe from any hook.
 async function poll($: EngineInterface): Promise<void> {
   let agents: Agent[], holds: Hold[]
   try {
@@ -81,10 +83,61 @@ async function poll($: EngineInterface): Promise<void> {
     seenHolds.add(hold.id)
     $.ui.toast(`${hold.agent} wants to ${KIND[hold.kind] || hold.kind}: ${hold.what}`)
   }
-  await deliverReplies($)
 }
 
-// Replies to messages this session sent arrive as a new turn here, so nothing waits on them.
+// The background timer: status plus delivery. Delivery runs only here, because a turn can't be
+// started from a command or tool hook (it would wait on the turn that hook is holding).
+async function tick($: EngineInterface): Promise<void> {
+  await poll($)
+  if (!(await read($, onlineAtom))) return
+  await deliverReplies($)
+  await forwardUpdates($)
+}
+
+// A quiet update: a dim line for the person, background for the model's next turn, no turn now.
+async function quiet($: EngineInterface, agent: string, body: string): Promise<void> {
+  try { // best effort: if the engine refuses the row, the person still sees the line and the toast
+    await $.session.append({
+      message: { type: 'user', content: [{ type: 'text', text: `[Team update from ${agent}; background, no reply needed]\n${body}` }] },
+    })
+  } catch {}
+  $.ui.log(`Team · ${agent}: ${body}`)
+  $.ui.toast(`${agent}: ${body.split('\n')[0]?.slice(0, 120) ?? ''}`)
+}
+
+// `/team follow`: what agents told the user (in threads this session didn't start) arrives quietly.
+async function forwardUpdates($: EngineInterface): Promise<void> {
+  const follow = await read($, followAtom)
+  if (!follow.on) return
+  let feed: { latest: number; messages: any[] }
+  try {
+    feed = await api($, `/api/harness/updates?after=${follow.after}`)
+  } catch {
+    return
+  }
+  const own = new Set((await read($, asksAtom)).map((a) => a.thread))
+  let after = feed.messages.length ? follow.after : feed.latest
+  for (const m of feed.messages) {
+    try {
+      if (!own.has(m.thread)) await quiet($, m.agent, m.text)
+    } catch {
+      break // stop here; the next tick resumes from the last one delivered
+    }
+    after = m.id
+  }
+  if (after !== follow.after) await update($, followAtom, (f) => ({ ...f, after }))
+}
+
+async function setFollow($: EngineInterface, on: boolean): Promise<string> {
+  const after = on ? (await api($, '/api/harness/updates?after=0')).latest : 0
+  await update($, followAtom, () => ({ on, after }))
+  return on
+    ? 'Following the team: what agents report to you will appear here quietly (no turn, a dim line and a toast). /team follow off to stop.'
+    : 'Stopped following the team. Replies to messages you send from here still arrive.'
+}
+
+// Replies to messages this session sent: the first starts a turn here (someone is waiting on it), so
+// nothing has to wait or poll; later ones in the thread (a lead's final report) arrive quietly.
 async function deliverReplies($: EngineInterface): Promise<void> {
   const asks = await read($, asksAtom)
   if (!asks.length) return
@@ -98,19 +151,61 @@ async function deliverReplies($: EngineInterface): Promise<void> {
       if (now - ask.at < ASK_TTL_MS) keep.push(ask)
       continue
     }
-    const reply = msgs.find((m) => m.id > ask.id && m.thread === ask.thread && m.role === 'assistant')
-    if (reply) {
-      await $.prompt.submit({ text: `Reply from team agent ${ask.agent}:\n\n${reply.text}` })
-    } else if (now - ask.at < ASK_TTL_MS) keep.push(ask)
+    const fresh = msgs.filter((m) => m.id > ask.after && m.thread === ask.thread && m.role === 'assistant')
+    if (!fresh.length) {
+      if (now - ask.at < ASK_TTL_MS) keep.push(ask)
+      continue
+    }
+    let done = ask
+    try { // a failed delivery keeps the ask as it was, so the next tick retries it
+      if (!ask.replied) {
+        await $.prompt.submit({ text: `Reply from team agent ${ask.agent}:\n\n${fresh.map((m) => m.text).join('\n\n')}` })
+        done = { ...ask, replied: true, after: fresh[fresh.length - 1].id, at: now }
+      } else {
+        for (const m of fresh) {
+          await quiet($, ask.agent, m.text)
+          done = { ...done, after: m.id, at: now }
+        }
+      }
+    } catch {}
+    keep.push(done)
   }
   if (!same(asks, keep)) await update($, asksAtom, () => keep)
 }
 
+async function track($: EngineInterface, agent: string, msg: { id: number; thread: string }): Promise<void> {
+  const ask: Ask = { agent, id: msg.id, thread: msg.thread, at: await $.clock.now(), replied: false, after: msg.id }
+  await update($, asksAtom, (list) => [...list, ask])
+}
+
 async function send($: EngineInterface, agent: string, text: string): Promise<string> {
   const rec = await api($, `/api/harness/agents/${encodeURIComponent(agent)}/message`, 'POST', { text })
-  const ask: Ask = { agent, id: rec.id, thread: rec.thread, at: await $.clock.now() }
-  await update($, asksAtom, (list) => [...list, ask])
+  await track($, agent, rec)
   return `Sent to ${agent}. Their reply will arrive in this conversation on its own when it's ready.`
+}
+
+type StartArgs = { template?: string; project?: string; prefix?: string; scope?: string;
+  test_command?: string; task?: string; question?: string }
+
+async function startTeam($: EngineInterface, a: StartArgs): Promise<string> {
+  const r = await api($, `/api/harness/teams/${encodeURIComponent(String(a.template || ''))}/start`, 'POST', {
+    project: a.project || '', prefix: a.prefix || '',
+    inputs: { scope: a.scope, test_command: a.test_command, task: a.task, question: a.question },
+  })
+  if (r.message) await track($, r.lead, r.message)
+  await poll($)
+  return `Started ${r.team}: ${r.agents.join(', ')}. ` + (r.kickoff
+    ? `${r.lead} is working on it; its first reply will arrive here, and later reports quietly.`
+    : `Nothing was sent yet; message ${r.lead} to give it work.`)
+}
+
+async function templateList($: EngineInterface): Promise<string> {
+  try {
+    const ts: any[] = await api($, '/api/harness/teams')
+    return ts.map((t) => `${t.name} (${t.label}; inputs: ${t.inputs.join(', ') || 'none'}): ${t.description}`).join(' | ')
+  } catch {
+    return 'pipeline, project-team, research, debate'
+  }
 }
 
 async function decide($: EngineInterface, hold: Hold, approve: boolean, always = false): Promise<void> {
@@ -148,7 +243,26 @@ export const register: Register = (on) => {
     await $.command.register({
       name: 'team',
       description: 'Your brain agent team: open the pane, message an agent, or stop everything',
-      argumentHint: '[send <agent> <message> | stop | hub]',
+      argumentHint: '[send <agent> <message> | follow [on|off] | stop | hub]',
+    })
+    await $.tool.register({
+      name: 'start_team',
+      description: "Start a team of brain agents from a template on one of the user's projects. Templates: "
+        + (await templateList($)) + '. The lead\'s first reply is delivered back here automatically; do not wait or poll.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          template: { type: 'string' },
+          project: { type: 'string', description: 'registered project name, e.g. "Trip Fairy"' },
+          prefix: { type: 'string', description: 'agent name prefix; defaults to the project name' },
+          scope: { type: 'string', description: "builder's folder(s), relative to the project" },
+          test_command: { type: 'string', description: 'pre-approved for builder and reviewer, e.g. "npm test"' },
+          task: { type: 'string', description: 'tracker task id for the lead to start on' },
+          question: { type: 'string', description: 'for research and debate' },
+        },
+        required: ['template', 'project'],
+      },
+      isDeferred: false,
     })
     await $.tool.register({
       name: 'agents',
@@ -177,7 +291,7 @@ export const register: Register = (on) => {
       },
     })
     await poll($) // a local request: answers or fails at once, so the first draw has data
-    $.clock.every(POLL_MS, () => poll($))
+    $.clock.every(POLL_MS, () => tick($))
 
     return next(e)
   })
@@ -197,8 +311,10 @@ export const register: Register = (on) => {
       const m = args.match(/^send\s+(\S+)\s+([\s\S]+)$/)
       if (m) return { text: await send($, m[1] ?? '', m[2] ?? '') }
       if (args === 'stop') return { text: await stopAll($) }
+      const f = args.match(/^follow(?:\s+(on|off))?$/)
+      if (f) return { text: await setFollow($, f[1] !== 'off') }
       if (args === 'hub') return { text: `Team view: ${HUB}` }
-      return { text: 'Usage: /team · /team send <agent> <message> · /team stop · /team hub' }
+      return { text: 'Usage: /team · /team send <agent> <message> · /team follow [on|off] · /team stop · /team hub' }
     } catch (err) {
       return { text: `Team: ${(err as Error).message}` }
     }
@@ -222,6 +338,14 @@ export const register: Register = (on) => {
     const input = e as unknown as { agent?: string; text?: string } // a tool's arguments sit on the event
     try {
       return text(await send($, String(input.agent || ''), String(input.text || '')))
+    } catch (err) {
+      return { deny: (err as Error).message }
+    }
+  })
+
+  on('tool.call', { tool: 'mcp__team__start_team' }, async ($, e) => {
+    try {
+      return text(await startTeam($, e as unknown as StartArgs))
     } catch (err) {
       return { deny: (err as Error).message }
     }
@@ -254,7 +378,7 @@ export const register: Register = (on) => {
 
     return (
       <Box flexDirection="column" gap={1}>
-        <Text dimColor>{summary(agents, holds)}</Text>
+        <Text dimColor>{summary(agents, holds)}{(await read($, followAtom)).on ? ' · following' : ''}</Text>
         {holds.map((hold) => (
           <Box flexDirection="column">
             <Text color={/destructive|push/.test(hold.kind) ? 'error' : 'warning'}>

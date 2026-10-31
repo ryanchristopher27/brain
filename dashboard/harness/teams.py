@@ -97,11 +97,12 @@ async def start(h: Harness, template: str, project: str, root: Path, personas: s
         raise
     lead = next((m for m in t["members"] if m.get("lead")), t["members"][0])
     kickoff = t.get("kickoff") or ""
-    sent = None
+    sent = rec = None
     if kickoff and all(f"{{{k}}}" not in kickoff or k in inputs for k in INPUTS):
         sent = kickoff.format(**{k: inputs.get(k, "") for k in INPUTS})
-        await h.send(names[lead["as"]], sent)
-    return {"team": team, "agents": [names[m["as"]] for m in t["members"]], "lead": names[lead["as"]], "kickoff": sent}
+        rec = await h.send(names[lead["as"]], sent)
+    return {"team": team, "agents": [names[m["as"]] for m in t["members"]], "lead": names[lead["as"]], "kickoff": sent,
+            "message": {"id": rec["id"], "thread": rec["thread"]} if rec else None}
 
 
 async def remove(h: Harness, team: str) -> int:

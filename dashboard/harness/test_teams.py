@@ -46,6 +46,7 @@ async def test_pipeline_start(tmp):
     assert "'builder' is app-builder" in v["app-planner"]["brief"] and "`python -m pytest`" in v["app-reviewer"]["brief"]
     assert v["app-planner"]["model"]["model"] == "claude-opus-5-5"
     assert out["kickoff"] == "Take task #ab12cd to review."
+    assert out["message"]["thread"] and out["message"]["id"] > 0
     await drain(h, "app-planner")
     assert FakeClient.instances[0].prompts == ["Take task #ab12cd to review."]
 

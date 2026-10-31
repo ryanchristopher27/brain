@@ -614,6 +614,12 @@ class DecideReq(BaseModel):
     always: bool = False
 
 
+@app.get("/api/harness/updates")
+async def harness_updates(after: int = 0):
+    """What agents told the user since message `after` (the team mod's follow feed)."""
+    return await _harness(lambda: asyncio.to_thread(harness_store.updates, harness.conn, max(0, after)))
+
+
 @app.get("/api/harness/holds")
 async def harness_holds(status: str = "pending"):
     return await _harness(lambda: asyncio.to_thread(harness_store.holds, harness.conn, status or None))

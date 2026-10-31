@@ -1,7 +1,7 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 // A fake brain dashboard: answers the harness API the mod calls, and records what it was sent.
-function dashboard(state: { agents: any[]; holds: any[]; messages: Record<string, any[]>; up?: boolean }) {
+function dashboard(state: { agents: any[]; holds: any[]; messages: Record<string, any[]>; up?: boolean; updates?: any[] }) {
   const sent: { method: string; path: string; body: any }[] = []
   const answer = (status: number, body: unknown) =>
     ({ value: { status, ok: status < 400, headers: {}, text: JSON.stringify(body) } })
@@ -22,6 +22,17 @@ function dashboard(state: { agents: any[]; holds: any[]; messages: Record<string
       return answer(200, { status: 'approved' })
     }
     if (path === '/api/harness/kill') return answer(200, { paused: state.agents.length })
+    m = path.match(/^\/api\/harness\/updates\?after=(\d+)$/)
+    if (m) {
+      const after = Number(m[1])
+      const all = state.updates || []
+      return answer(200, { latest: Math.max(0, ...all.map((u) => u.id)), messages: all.filter((u) => u.id > after) })
+    }
+    if (path === '/api/harness/teams') return answer(200, [{ name: 'pipeline', label: 'Plan → build → review', inputs: ['scope', 'task'], description: 'd' }])
+    if (path === '/api/harness/teams/pipeline/start') {
+      return answer(200, { team: 'app:pipeline', agents: ['app-planner', 'app-builder'], lead: 'app-planner',
+        kickoff: 'Take task #ab to review.', message: { id: 50, thread: 'tk' } })
+    }
     return answer(404, { error: 'unknown' })
   }
   return { sent, fetch }
@@ -33,16 +44,16 @@ const HOLD = { id: 7, agent: 'brain-builder', kind: 'command', tool: 'Bash', inp
 const PANE = { plugin: 'team', component: 'Pane', requestId: 'team',
   props: { title: 'Team', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} } } as const
 
-function engine(on: any, fetch: any, toasts: string[] = [], prompts: string[] = []) {
+function engine(on: any, fetch: any, toasts: string[] = [], prompts: string[] = [], logs: string[] = []) {
+  on('ui.log', (_: unknown, e: { text: string }) => { logs.push(e.text); return { value: undefined } })
   on('http.fetch', fetch)
   on('command.register', () => ({ value: { command: 'team' } }))
   on('tool.register', (_: unknown, e: { name: string }) => ({ value: { tool: `mcp__team__${e.name}` } }))
-  on('clock.every', () => ({ value: undefined }))
-  on('clock.now', () => ({ value: 1_000 }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.toast', (_: unknown, e: { text: string }) => { toasts.push(e.text); return { value: undefined } })
-  on('prompt.submit', (_: unknown, e: { text: string }) => { prompts.push(e.text); return {} })
+  on('prompt.submit', (_: unknown, e: { text: string }) => { prompts.push(e.text); return { text: e.text } })
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  return mock.clock(on) // the poll timer runs on it: a test advances it to deliver
 }
 
 test('the pane lists agents and approves a waiting command, on every surface', async ($, on) => {
@@ -70,7 +81,7 @@ test('a message sent from this session gets its reply delivered back as a turn',
   const state = { agents: [{ ...AGENT, state: 'live' }], holds: [], messages: {} as Record<string, any[]> }
   const dash = dashboard(state)
   const prompts: string[] = []
-  engine(on, dash.fetch, [], prompts)
+  const clock = engine(on, dash.fetch, [], prompts)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
 
   const r = await $.tool.call({ tool: 'mcp__team__send', agent: 'brain-builder', text: 'run the tests' } as any)
@@ -82,9 +93,11 @@ test('a message sent from this session gets its reply delivered back as a turn',
     { id: 42, thread: 'other', role: 'assistant', text: 'unrelated' },
     { id: 43, thread: 'th1', role: 'assistant', text: 'All 12 tests pass.' },
   ]
-  await $.command.run({ command: 'team', args: '' } as any) // any poll delivers it
-  expect(prompts).toEqual(['Reply from team agent brain-builder:\n\nAll 12 tests pass.'])
   await $.command.run({ command: 'team', args: '' } as any)
+  expect(prompts).toEqual([]) // a command can't start a turn: delivery waits for the timer
+  await clock.advance(4000)
+  expect(prompts).toEqual(['Reply from team agent brain-builder:\n\nAll 12 tests pass.'])
+  await clock.advance(4000)
   expect(prompts.length).toBe(1) // delivered once
 })
 
@@ -105,4 +118,47 @@ test('/team says how to start the dashboard when it is down', async ($, on) => {
   expect(JSON.stringify(r)).toContain("isn't reachable")
   const usage = await $.command.run({ command: 'team', args: 'dance' } as any)
   expect(JSON.stringify(usage)).toContain('Usage: /team')
+})
+
+test('a started team reports back: first reply as a turn, the final report quietly', async ($, on) => {
+  const state = { agents: [], holds: [], messages: {} as Record<string, any[]> }
+  const dash = dashboard(state)
+  const prompts: string[] = [], logs: string[] = []
+  const clock = engine(on, dash.fetch, [], prompts, logs)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const r = await $.tool.call({ tool: 'mcp__team__start_team', template: 'pipeline', project: 'app', task: 'ab' } as any)
+  expect(JSON.stringify(r)).toContain('Started app:pipeline')
+  expect(dash.sent.find((x) => x.path.endsWith('/start'))?.body).toEqual(
+    { project: 'app', prefix: '', inputs: { task: 'ab' } })
+
+  state.messages['app-planner'] = [{ id: 51, thread: 'tk', role: 'assistant', text: 'Dispatched to builder.' }]
+  await clock.advance(4000)
+  expect(prompts).toEqual(['Reply from team agent app-planner:\n\nDispatched to builder.'])
+
+  state.messages['app-planner'].push({ id: 55, thread: 'tk', role: 'assistant', text: 'Task #ab is in review.' })
+  await clock.advance(4000)
+  expect(prompts.length).toBe(1) // no second turn
+  expect(logs).toEqual(['Team · app-planner: Task #ab is in review.'])
+})
+
+test('/team follow forwards what agents tell you, quietly, skipping threads this session started', async ($, on) => {
+  const state = { agents: [], holds: [], messages: {} as Record<string, any[]>,
+    updates: [{ id: 5, agent: 'old', thread: 'x', text: 'before following' }] as any[] }
+  const prompts: string[] = [], logs: string[] = []
+  const clock = engine(on, dashboard(state).fetch, [], prompts, logs)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const on1 = await $.command.run({ command: 'team', args: 'follow' } as any)
+  expect(JSON.stringify(on1)).toContain('Following the team')
+  await $.tool.call({ tool: 'mcp__team__send', agent: 'expert', text: 'q' } as any) // own thread 'th1'
+  state.updates.push({ id: 6, agent: 'lead', thread: 'y', text: 'Research done: use SQS.' },
+    { id: 7, agent: 'expert', thread: 'th1', text: 'answer to my own question' })
+  await clock.advance(4000)
+  expect(logs).toEqual(['Team · lead: Research done: use SQS.']) // nothing old, nothing from my own thread
+  expect(prompts).toEqual([])
+  await clock.advance(4000)
+  expect(logs.length).toBe(1) // each update once
+  await $.command.run({ command: 'team', args: 'follow off' } as any)
+  state.updates.push({ id: 8, agent: 'lead', thread: 'y', text: 'later' })
+  await clock.advance(4000)
+  expect(logs.length).toBe(1)
 })

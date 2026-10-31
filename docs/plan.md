@@ -1661,3 +1661,27 @@ Findings that change the build:
 - Checks: validates, type-checks, 4 tests (pane + approve on terminal/desktop, reply delivered once,
   band, dashboard down). Live headless: `/team` and `agents` read the real dashboard; `send` reached a
   temporary agent, which replied.
+
+## Agent Harness — follow-up (2026-10-31): your session as the team's front door
+- **`start_team` tool** in the `team` mod: Claude in a normal session starts a team from a template
+  (templates listed in the tool description, fetched from the dashboard). The lead's replies are tracked.
+- **Delivery rules:** the first reply to a message a session sent starts a turn there (someone is
+  waiting); later messages from that agent in the same thread (a lead's final report) arrive quietly:
+  a dim transcript line, a toast, and a background row for the model's next turn
+  (`$.session.append`, best effort), so no extra turn of the main session is spent.
+- **`/team follow [on|off]`** (per session, off by default so several open sessions don't all get the
+  same updates): forwards what agents report to the user — assistant messages from the agent a thread
+  was started with (`GET /api/harness/updates?after=`; teammates' replies inside a thread stay there) —
+  quietly, skipping threads this session started.
+- **Found while testing:** a turn can't be started from a command or tool hook (it would wait on the turn
+  that hook holds), so delivery runs only on the background timer; status refreshes run anywhere.
+  Each delivery is independent: a failed one is retried next tick, done ones aren't repeated.
+- **Agents can't read secret files** (`.env*` except `.env.example`/sample/template, `.tokens.json`,
+  `secrets.json`, `*.pem|key|p12`, SSH keys, `.netrc`, `.npmrc`): denied at the gate for Read/Grep.
+  Prompted by Baseline's `.env` and WHOOP `.tokens.json`. Live: the Baseline expert's `.env` read was
+  denied and it answered from `.env.example`.
+- **Project experts:** `trip-fairy-expert`, `ryans-boomin-beats-expert`, `baseline-expert` (definitions in
+  each repo's `.brain/agents/`, added to the team). Trip Fairy's and Boomin Beats' also read the user's
+  memory notes on them (kept in brain's memory folder). Baseline registered as a project.
+- Tests: mod 6 (incl. start_team → quiet final report, follow skipping own threads, timer-only
+  delivery); harness 23 runtime (+updates feed, secret files) / 6 teams.

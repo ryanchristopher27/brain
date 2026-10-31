@@ -193,3 +193,15 @@ def pending_messages(conn) -> list[dict]:
     """Inbox messages whose turn never finished (the process stopped first), oldest first."""
     rows = conn.execute("SELECT m.* FROM messages m JOIN agents a ON a.name = m.agent WHERE m.pending=1 ORDER BY m.id")
     return [dict(r) for r in rows]
+
+
+def updates(conn, after: int, limit: int = 50) -> dict:
+    """Replies that reached the user: assistant messages from the agent a thread was started with
+    (the one the user's message went to), newer than `after`. Teammates' replies inside a thread are
+    left out: they talk to each other, and the thread's first agent reports to the user."""
+    latest = conn.execute("SELECT COALESCE(MAX(id), 0) FROM messages").fetchone()[0]
+    rows = conn.execute(
+        "SELECT m.* FROM messages m WHERE m.role='assistant' AND m.id > ? AND m.agent = ("
+        " SELECT r.agent FROM messages r WHERE r.thread = m.thread AND r.role='user' AND r.hop = 0"
+        " ORDER BY r.id LIMIT 1) ORDER BY m.id LIMIT ?", (after, limit))
+    return {"latest": latest, "messages": [dict(r) for r in rows]}

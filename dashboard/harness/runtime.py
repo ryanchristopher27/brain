@@ -59,6 +59,9 @@ DESTRUCTIVE_RE = re.compile(r"\brm\s+-\w*[rf]|\bgit\s+(reset\s+--hard|clean\s+-\
                             r"\bsudo\b|\bchmod\s+-R|\bmkfs|\bdd\s+if=|\|\s*(sh|bash|zsh)\b|\bdrop\s+(table|database)\b",
                             re.I)
 DENY_TOOLS = {"Task", "Agent"}  # agents don't spawn agents in v1
+# Files no agent needs to read: credentials stay out of model context. .env.example and friends are fine.
+SECRET_FILE_RE = re.compile(r"(^|/)(\.env(\.(?!example|sample|template)[\w.-]+)?|\.tokens\.json|secrets\.json|"
+                            r"[^/]+\.(pem|key|p12)|id_(rsa|ed25519|ecdsa)[^/]*|\.netrc|\.npmrc)$|(^|/)\.ssh/")
 HOLD_SECS = 900
 SESSION_SETTINGS = json.dumps({"enabledPlugins": {"model-router@brain": False}})
 BUS_TOOLS = ["mcp__bus__send_message", "mcp__bus__list_agents", "mcp__bus__read_task", "mcp__bus__post_update",
@@ -153,6 +156,9 @@ def resolve_model(m: dict, tier: str = "standard") -> tuple[str, str]:
 def gate_decision(tool: str, inp: dict, cwd: str, scope: list[str],
                   always: list[str] = ()) -> tuple[str, str, str]:
     """(verdict, kind, reason) with verdict allow | hold | deny."""
+    target = inp.get("file_path") or inp.get("notebook_path") or (inp.get("path") if tool == "Grep" else "") or ""
+    if tool in READ_TOOLS | {"Grep"} and target and SECRET_FILE_RE.search(str((Path(cwd) / target).resolve())):
+        return "deny", "secret file", f"{target} holds credentials; agents don't read secret files."
     if tool in READ_TOOLS or tool.startswith("mcp__bus__"):
         return "allow", "", ""
     if tool in DENY_TOOLS:
