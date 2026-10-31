@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS agents (
     model       TEXT NOT NULL,             -- JSON model settings (see runtime.default_model)
     session_id  TEXT,
     paused      INTEGER NOT NULL DEFAULT 0,
+    limits      TEXT NOT NULL DEFAULT '{}',   -- JSON, e.g. {"daily_usd": 2.0}
     usage_usd   REAL NOT NULL DEFAULT 0,
     created_at  REAL NOT NULL,
     updated_at  REAL NOT NULL
@@ -34,12 +35,18 @@ CREATE TABLE IF NOT EXISTS messages (
     sender  TEXT NOT NULL,                 -- 'you', another agent's name, or the agent itself
     text    TEXT NOT NULL,
     model   TEXT,
-    cost    REAL
+    cost    REAL,
+    thread  TEXT,                          -- conversation a message belongs to (starts at a user message)
+    hop     INTEGER NOT NULL DEFAULT 0,    -- agent-to-agent hand-offs since the user's message
+    route   TEXT                           -- why this model: 'pinned' or 'auto: <tier> (<why>)'
 );
 CREATE INDEX IF NOT EXISTS messages_agent ON messages(agent, id);
 """
 
-_JSON = ("scope", "model")
+_JSON = ("scope", "model", "limits")
+# Columns added after a table first shipped: (table, column, definition).
+_ADDED = [("agents", "limits", "TEXT NOT NULL DEFAULT '{}'"), ("messages", "thread", "TEXT"),
+          ("messages", "hop", "INTEGER NOT NULL DEFAULT 0"), ("messages", "route", "TEXT")]
 
 
 def open_db(path: Path = DB_PATH) -> sqlite3.Connection:
@@ -48,6 +55,11 @@ def open_db(path: Path = DB_PATH) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
+    for table, col, ddl in _ADDED:
+        if col not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+    conn.execute("CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread)")
+    conn.commit()
     return conn
 
 
@@ -61,11 +73,12 @@ def _row(r: sqlite3.Row | None) -> dict | None:
     return d
 
 
-def create_agent(conn, name: str, persona: str, project: str, brief: str, scope: list[str], model: dict) -> dict:
+def create_agent(conn, name: str, persona: str, project: str, brief: str, scope: list[str], model: dict,
+                 limits: dict) -> dict:
     now = time.time()
-    conn.execute("INSERT INTO agents(name,persona,project,brief,scope,model,created_at,updated_at) "
-                 "VALUES(?,?,?,?,?,?,?,?)",
-                 (name, persona, project, brief, json.dumps(scope), json.dumps(model), now, now))
+    conn.execute("INSERT INTO agents(name,persona,project,brief,scope,model,limits,created_at,updated_at) "
+                 "VALUES(?,?,?,?,?,?,?,?,?)",
+                 (name, persona, project, brief, json.dumps(scope), json.dumps(model), json.dumps(limits), now, now))
     conn.commit()
     return get_agent(conn, name)
 
@@ -100,15 +113,26 @@ def delete_agent(conn, name: str) -> None:
 
 
 def log_message(conn, agent: str, role: str, sender: str, text: str, model: str | None = None,
-                cost: float | None = None) -> dict:
+                cost: float | None = None, thread: str | None = None, hop: int = 0,
+                route: str | None = None) -> dict:
     ts = time.time()
-    cur = conn.execute("INSERT INTO messages(agent,ts,role,sender,text,model,cost) VALUES(?,?,?,?,?,?,?)",
-                       (agent, ts, role, sender, text, model, cost))
+    cur = conn.execute("INSERT INTO messages(agent,ts,role,sender,text,model,cost,thread,hop,route) "
+                       "VALUES(?,?,?,?,?,?,?,?,?,?)", (agent, ts, role, sender, text, model, cost, thread, hop, route))
     conn.commit()
     return {"id": cur.lastrowid, "agent": agent, "ts": ts, "role": role, "sender": sender, "text": text,
-            "model": model, "cost": cost}
+            "model": model, "cost": cost, "thread": thread, "hop": hop, "route": route}
 
 
 def messages(conn, agent: str, limit: int = 200) -> list[dict]:
     rows = conn.execute("SELECT * FROM messages WHERE agent=? ORDER BY id DESC LIMIT ?", (agent, limit))
     return [dict(r) for r in rows][::-1]
+
+
+def usage_since(conn, agent: str, since: float) -> float:
+    row = conn.execute("SELECT COALESCE(SUM(cost),0) FROM messages WHERE agent=? AND ts>=?", (agent, since)).fetchone()
+    return float(row[0])
+
+
+def thread_turns(conn, thread: str) -> int:
+    """Agent turns taken in a thread, across every agent."""
+    return conn.execute("SELECT COUNT(*) FROM messages WHERE thread=? AND role='assistant'", (thread,)).fetchone()[0]

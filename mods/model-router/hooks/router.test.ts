@@ -79,7 +79,7 @@ test('undecided prompts ask the classifier', async ($, on) => {
   bottoms(on, seen, 'deep')
   await submit($, 'the export sometimes drops rows, look into it')
   await step($, {})
-  expect(seen[0].model).toBe('claude-opus-5-5')
+  expect(seen[0]?.model).toBe('claude-opus-5-5')
 })
 
 test('standard leaves the session model alone', async ($, on) => {
@@ -87,7 +87,7 @@ test('standard leaves the session model alone', async ($, on) => {
   bottoms(on, seen, 'standard')
   await submit($, 'add a loading spinner to the save button and a toast when it finishes')
   await step($, {})
-  expect(seen[0].model).toBe('claude-sonnet-5-5')
+  expect(seen[0]?.model).toBe('claude-sonnet-5-5')
 })
 
 test('a light turn escalates after too many steps, and long chats stay put', async ($, on) => {
@@ -106,6 +106,6 @@ test('subagent requests are not rerouted', async ($, on) => {
   bottoms(on, seen)
   await submit($, 'think about the architecture')
   await step($, { agentId: 'a1', model: 'claude-haiku-5-5' })
-  expect(seen[0].model).toBe('claude-haiku-5-5')
+  expect(seen[0]?.model).toBe('claude-haiku-5-5')
 })
 

@@ -18,6 +18,7 @@ from .runtime import Harness, HarnessError, gate_decision, resolve_model
 
 class FakeClient:
     instances: list["FakeClient"] = []
+    on_turn = None  # optional async (client, prompt) -> None, run inside a turn (e.g. to call bus tools)
 
     def __init__(self, options):
         self.options, self.prompts, self.models, self.cost = options, [], [options.model], 0.0
@@ -37,6 +38,8 @@ class FakeClient:
         self.prompts.append(prompt)
 
     async def receive_response(self):
+        if FakeClient.on_turn:
+            await FakeClient.on_turn(self, self.prompts[-1])
         self.cost += 0.01
         model = self.models[-1]
         yield AssistantMessage(content=[ToolUseBlock(id="t1", name="Read", input={"file_path": "a.py"}),
@@ -47,6 +50,7 @@ class FakeClient:
 
 def make(tmp: Path, idle: float = 60) -> tuple[Harness, list[dict], Path]:
     FakeClient.instances.clear()
+    FakeClient.on_turn = None
     proj = tmp / "proj"
     (proj / "src").mkdir(parents=True, exist_ok=True)
     events: list[dict] = []
@@ -59,13 +63,18 @@ def make(tmp: Path, idle: float = 60) -> tuple[Harness, list[dict], Path]:
     return h, events, proj
 
 
-async def drain(h: Harness, name: str) -> None:
-    for _ in range(200):
-        s = h.sessions.get(name)
-        if s and not s.busy and s.inbox.empty():
+async def drain(h: Harness, *names: str) -> None:
+    for _ in range(300):
+        ss = [h.sessions.get(n) for n in names]
+        if all(s and not s.busy and not s.held and s.inbox.empty() for s in ss):
             return
         await asyncio.sleep(0.01)
-    raise AssertionError("agent never went idle")
+    raise AssertionError("agents never went idle")
+
+
+def bus_call(h: Harness, agent: str, tool_name: str, args: dict):
+    t = next(t for t in h.sessions[agent].bus_tools() if t.name == tool_name)
+    return t.handler(args)
 
 
 def run(coro_fn):
@@ -110,7 +119,9 @@ async def test_turn_logs_usage_and_session(tmp):
     assert v["session_id"] == "sess-1" and v["state"] == "live" and abs(v["usage_usd"] - 0.01) < 1e-9
     opts = FakeClient.instances[0].options
     assert "ANTHROPIC_API_KEY" not in opts.env and "model-router@brain" in opts.settings
-    assert opts.extra_args == {"agent": "builder"} and opts.model == "claude-sonnet-5-5"
+    assert opts.extra_args == {"agent": "harness-builder"} and opts.model == "claude-sonnet-5-5"
+    tools = opts.agents["harness-builder"].tools
+    assert "Write" in tools and "mcp__bus__send_message" in tools and "Persona" not in tools
     assert any(e.get("event") == "message" for e in events)
 
 
@@ -121,7 +132,8 @@ async def test_teammate_prefix_and_serial_inbox(tmp):
     await h.send("builder", "one", sender="planner")
     await h.send("builder", "two")
     await drain(h, "builder")
-    assert FakeClient.instances[0].prompts == ["[from planner]\none", "two"]
+    first, second = FakeClient.instances[0].prompts
+    assert first.startswith("[from planner]") and first.endswith("\none") and 'to="planner"' in first and second == "two"
     assert len(FakeClient.instances) == 1  # one connection serves the queue
 
 
@@ -176,6 +188,96 @@ async def test_delete_stops_and_forgets(tmp):
     assert store.messages(h.conn, "builder") == []
 
 
+@run
+async def test_bus_relays_with_thread_and_hops(tmp):
+    h, _, _ = make(tmp)
+    await h.create("planner", "builder", "app")
+    await h.create("builder", "builder", "app")
+
+    async def on_turn(client, prompt):  # planner hands off once; builder replies back once
+        me = "planner" if "planner" in client.options.system_prompt["append"] else "builder"
+        if me == "planner" and not prompt.startswith("[from"):
+            r = await bus_call(h, "planner", "send_message", {"to": "builder", "text": "build it"})
+            assert not r.get("is_error"), r
+        if me == "builder" and prompt.startswith("[from planner]"):
+            await bus_call(h, "builder", "send_message", {"to": "planner", "text": "built"})
+    FakeClient.on_turn = on_turn
+    await h.send("planner", "plan and delegate")
+    await drain(h, "planner", "builder")
+    users = [m for m in store.messages(h.conn, "planner") + store.messages(h.conn, "builder") if m["role"] == "user"]
+    assert {(m["agent"], m["sender"], m["hop"]) for m in users} == \
+        {("planner", "you", 0), ("builder", "planner", 1), ("planner", "builder", 2)}, users
+    assert len({m["thread"] for m in users}) == 1
+    r = await bus_call(h, "planner", "send_message", {"to": "planner", "text": "x"})
+    assert r.get("is_error") and "yourself" in r["content"][0]["text"]
+    r = await bus_call(h, "planner", "send_message", {"to": "ghost", "text": "x"})
+    assert r.get("is_error") and "builder" in r["content"][0]["text"]  # error lists the real team
+    listed = (await bus_call(h, "planner", "list_agents", {}))["content"][0]["text"]
+    assert "builder" in listed and "planner" not in listed
+
+
+@run
+async def test_ping_pong_stops_at_hop_limit(tmp):
+    h, _, _ = make(tmp)
+    await h.create("ping", "builder", "app")
+    await h.create("pong", "builder", "app")
+    refusals = []
+
+    async def on_turn(client, prompt):  # each agent always messages the other: a runaway loop
+        me = "ping" if "'ping'" in client.options.system_prompt["append"] else "pong"
+        r = await bus_call(h, me, "send_message", {"to": "pong" if me == "ping" else "ping", "text": "again"})
+        if r.get("is_error"):
+            refusals.append(r["content"][0]["text"])
+    FakeClient.on_turn = on_turn
+    await h.send("ping", "start")
+    await drain(h, "ping", "pong")
+    turns = sum(m["role"] == "assistant" for a in ("ping", "pong") for m in store.messages(h.conn, a))
+    assert turns == runtime.HOP_LIMIT + 1 and refusals and "hand-off limit" in refusals[0], (turns, refusals)
+
+
+@run
+async def test_daily_cap_parks_message_and_pauses(tmp):
+    h, _, _ = make(tmp)
+    await h.create("builder", "builder", "app", limits={"daily_usd": 0.015})
+    await h.send("builder", "one")      # costs 0.01 → under the cap
+    await drain(h, "builder")
+    await h.send("builder", "two")      # costs 0.01 → now over
+    await drain(h, "builder")
+    await h.send("builder", "three")    # held: cap reached
+    for _ in range(100):
+        if h.view("builder")["paused"]:
+            break
+        await asyncio.sleep(0.01)
+    v = h.view("builder")
+    assert v["paused"] and h.sessions["builder"].held[1] == "three", v
+    assert "Daily usage cap" in store.messages(h.conn, "builder")[-1]["text"]
+    assert FakeClient.instances[0].options.max_budget_usd == 0.015
+    await h.update("builder", limits={"daily_usd": 1})
+    await h.resume("builder")
+    await drain(h, "builder")
+    assert FakeClient.instances[-1].prompts[-1] == "three"
+
+
+@run
+async def test_auto_routes_each_turn(tmp):
+    h, _, _ = make(tmp)
+    await h.create("auto", "builder", "app", model={"mode": "auto", "floor": "light"})
+    for text in ("commit and push it", "how should we design the cache?", "yes, go ahead", "!light do the rest"):
+        await h.send("auto", text)
+        await drain(h, "auto")
+    done = [m for m in store.messages(h.conn, "auto") if m["role"] == "assistant"]
+    assert [m["model"] for m in done] == ["claude-haiku-5-5", "claude-opus-5-5", "claude-opus-5-5", "claude-haiku-5-5"]
+    assert done[0]["route"] == "auto: light (git)" and done[2]["route"].startswith("auto: deep (continues")
+    assert FakeClient.instances[0].prompts[-1] == "do the rest"  # override prefix stripped
+
+
+def test_routing_rules_load():
+    from .routing import decide
+    assert decide("commit and push it")[:2] == ("light", "git")
+    assert decide("/plan the harness")[:2] == ("deep", "command")
+    assert decide("implement the inbox for the builder")[:2] == ("standard", "default")
+
+
 def test_resolve_model_auto_clamps():
     m = {**runtime.default_model("builder"), "mode": "auto", "floor": "standard"}
     assert resolve_model(m, "light") == ("claude-sonnet-5-5", "standard")
@@ -199,7 +301,9 @@ def test_gate_policy():
 
 TESTS = [test_create_validates, test_turn_logs_usage_and_session, test_teammate_prefix_and_serial_inbox,
          test_model_change_switches_live, test_idle_close_then_resume, test_pause_holds_inbox,
-         test_delete_stops_and_forgets, test_resolve_model_auto_clamps, test_gate_policy]
+         test_delete_stops_and_forgets, test_bus_relays_with_thread_and_hops, test_ping_pong_stops_at_hop_limit,
+         test_daily_cap_parks_message_and_pauses, test_auto_routes_each_turn, test_routing_rules_load,
+         test_resolve_model_auto_clamps, test_gate_policy]
 
 
 def main() -> int:

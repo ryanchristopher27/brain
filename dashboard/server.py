@@ -544,7 +544,7 @@ async def ws_endpoint(ws: WebSocket):
 
 # Serve the frontend last, so /api/* and /ws take precedence over the static mount.
 
-# ── agent harness (H1): long-lived named agents ────────────────────────────────────────────
+# ── agent harness (H1–H2): long-lived named agents that message each other ────────────────────────────────────────────
 class AgentReq(BaseModel):
     name: str
     persona: str
@@ -552,12 +552,14 @@ class AgentReq(BaseModel):
     brief: str = ""
     scope: list[str] | None = None
     model: dict | None = None
+    limits: dict | None = None
 
 
 class AgentPatch(BaseModel):
     brief: str | None = None
     scope: list[str] | None = None
     model: dict | None = None
+    limits: dict | None = None
 
 
 class MessageReq(BaseModel):
@@ -578,12 +580,12 @@ async def harness_agents():
 
 @app.post("/api/harness/agents")
 async def harness_create(req: AgentReq):
-    return await _harness(lambda: harness.create(req.name, req.persona, req.project, req.brief, req.scope, req.model))
+    return await _harness(lambda: harness.create(req.name, req.persona, req.project, req.brief, req.scope, req.model, req.limits))
 
 
 @app.patch("/api/harness/agents/{name}")
 async def harness_update(name: str, req: AgentPatch):
-    return await _harness(lambda: harness.update(name, req.brief, req.scope, req.model))
+    return await _harness(lambda: harness.update(name, req.brief, req.scope, req.model, req.limits))
 
 
 @app.delete("/api/harness/agents/{name}")

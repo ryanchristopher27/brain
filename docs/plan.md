@@ -1504,3 +1504,25 @@ Findings that change the build:
   in-scope write allowed, out-of-scope Write and Bash denied by the hook (files not created).
 - Observed cost: a Sonnet turn on a fresh session is ~$0.10 equivalent (Claude Code system prompt + tools
   load each connect). Worth watching when caps are set in H2; keeping sessions warm while busy helps.
+
+## Agent Harness — H2 done (2026-10-31): message bus, limits, auto routing
+- **Bus:** each session gets an in-process MCP server with `send_message(to, text)` and `list_agents()`.
+  A user message starts a thread (hop 0); each agent-to-agent hand-off carries the thread and hop+1.
+  Teammate messages arrive labelled `[from <name>]` with a reminder that plain replies go to the user's
+  timeline and answers go back via `send_message`. (Live run without the reminder: the answerer replied
+  to the timeline only, and the asker never got the answer.)
+- **Personas get the bus tools:** a persona's `tools:` is an allowlist, so `--agent scout` hid the bus.
+  The harness now defines a session-local `harness-<persona>` copy (same prompt and tools, plus the bus
+  tools) via `ClaudeAgentOptions.agents`. Fake-client tests couldn't catch this; the live run did.
+- **Limits, enforced in code:** hop limit 8 per chain, 20 agent turns per thread, daily usage cap per
+  agent (default $2-equivalent, `limits.daily_usd`, editable via PATCH). Hitting the daily cap parks the
+  message and pauses the agent; the SDK also gets `max_budget_usd` = today's remainder so one turn
+  can't overrun. Refusals go back to the sending agent as tool errors.
+- **Auto routing:** shares the model-router mod's rules, moved to `mods/model-router/hooks/rules.ts`
+  (strict-JSON object both the mod and `dashboard/harness/routing.py` read; the mod engine can't import
+  `.json`). Undecided messages → standard (no classifier call: a session start costs more than it saves).
+  Every assistant message records `route` (e.g. `auto: light (git)`, or the floor/ceiling clamp).
+- **Deferred to H5:** `post_update` (tracker updates from agents) — lands with the first real team.
+- Tests: 14 in `dashboard.harness.test_runtime` (bus relay with threads/hops, runaway ping-pong stopped
+  at the hop limit, daily-cap park + resume, per-turn auto routing). Mod: validates, 12/12 tests.
+  Live: two Haiku agents completed an ask → answer → report round trip (hops 0→1→2), about half a cent.

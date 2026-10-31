@@ -4,37 +4,24 @@ import type { Tier } from '../types'
  *  prompt text with any override prefix removed. */
 export type Decision = { tier: Tier | null; why: string; text?: string }
 
+import rules from './rules'
+
+// Rules live in rules.json so the agent harness (dashboard/harness/routing.py) routes the same way.
+type Rule = { source: string; flags: string }
+const re = (r: Rule) => new RegExp(r.source, r.flags)
+
 // "!light fix the typo", "!deep how should we…" — explicit, wins over everything.
-const OVERRIDE = /^\s*!(light|fast|cheap|standard|normal|deep|think|opus)\b[:\s]*/i
-const OVERRIDE_TIER: Record<string, Tier> = {
-  light: 'light', fast: 'light', cheap: 'light',
-  standard: 'standard', normal: 'standard',
-  deep: 'deep', think: 'deep', opus: 'deep',
-}
-
-const DEEP_COMMAND = /^\s*\/(plan|brainstorm|design|review|reflect|scaffold)\b/i
-const LIGHT_COMMAND = /^\s*\/(sync|status)\b/i
-
+const OVERRIDE = re(rules.override)
+const OVERRIDE_TIER = rules.override_tier as Record<string, Tier>
+const DEEP_COMMAND = re(rules.deep_command)
+const LIGHT_COMMAND = re(rules.light_command)
 // Open-ended thinking work. Matched anywhere in the prompt.
-const DEEP = /\b(plan(ning)?(?!\.md)|brainstorm\w*|architect\w*|re-?design\w*|design(ing)?|strateg\w*|trade-?offs?|approach(es)?|think (about|through|carefully|hard)|figure out (how|why|whether)|should (we|i)|what('s| is) the best way|pros and cons|from scratch|root cause|investigate|proposal|review (the|this|my|our)|deep dive)\b/i
-
+const DEEP = re(rules.deep)
 // Mechanical, fully-specified work. Only trusted on short prompts with no deep cue.
-const LIGHT: [RegExp, string][] = [
-  [/^\s*(please\s+)?(git\s+)?(commit|push|pull|merge|rebase|stash|tag|cherry-pick)\b/i, 'git'],
-  [/\b(commit|push)\s+(it|this|that|these|both|everything|them|the changes)\b/i, 'git'],
-  [/\bcommit (and|&) push\b/i, 'git'],
-  [/^\s*(re)?run\s+(the\s+)?(unit\s+)?(tests?|lint\w*|build|format\w*|smoke|type-?check)\b/i, 'run'],
-  [/\b(re)?start (the )?(dev )?server\b|\bkill (the )?(process|server)\b/i, 'server'],
-  [/^\s*rename\b|\brename (it|this|the)\b/i, 'rename'],
-  [/\bbump (the )?version\b/i, 'version'],
-  [/\bfix (the |a |this )?typos?\b/i, 'typo'],
-  [/^\s*(change|replace|swap|update) .{1,80} (to|with) .{1,80}$/i, 'defined edit'],
-  [/\badd .{1,60} to \.?gitignore\b/i, 'gitignore'],
-]
-const LIGHT_MAX_CHARS = 220
-
+const LIGHT: [RegExp, string][] = rules.light.map((r) => [re(r), r.why])
+const LIGHT_MAX_CHARS = rules.light_max_chars
 // "yes", "go ahead", "do it" — a continuation keeps the tier of the work it continues.
-const CONTINUE = /^\s*((yes|yep|yeah|ok(ay)?|sure|go ahead|do it|do that|sounds good|looks good|lgtm|continue|proceed|please do|go for it|perfect|great|thanks?|keep going)\b[\s.!,]*)+$/i
+const CONTINUE = re(rules.continue)
 
 export function decide(raw: string, previous: Tier): Decision {
   const o = raw.match(OVERRIDE)
