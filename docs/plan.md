@@ -1572,3 +1572,24 @@ Findings that change the build:
 - Verified in the browser against real Haiku agents: create from the form, message and watch the
   reply stream in, approve a held command from its card, switch a builder to auto with a ceiling,
   Stop everything (denied the waiting hold, paused both), delete from the UI. No console errors.
+
+## Agent Harness — H5 done (2026-10-31): first team end-to-end
+- **Tracker tools on the bus:** `read_task(task)` and `post_update(task, text, status?)` on the agent's own
+  project. Agents may move tasks to `doing` or `review` only; `done` is refused (tracker rule unchanged).
+  Updates are logged as `agent <name>: …` on the task and as a `tracker` line in the agent's timeline.
+- **Live team run** (trial task in a sandbox folder, script standing in for the user at the approval cards,
+  approving only `python` runs of the sandbox tests):
+  - h5-planner (Opus, read-only) read the task, moved it to doing, sent h5-builder the files and acceptance
+    criteria; h5-builder (Sonnet, scoped to the sandbox) wrote both files, ran the test after approval, and
+    reported back; the planner asked h5-reviewer (Sonnet) to review; reviewer replied APPROVE; the planner
+    posted a summary and moved the task to review. **57 s, ~$0.36 total, no human relay.**
+  - The reviewer's chained `cd … && cat … && python …` was denied by the stand-in's narrow policy; it
+    reviewed by reading instead and said so, and the planner's report to the user flagged that only the
+    builder had run the tests. Honest reporting held up across three agents.
+  - Independently re-ran the tests and the acceptance cases: pass.
+- **Live probes:** runaway loop (two agents told never to stop) cut off at the hop limit after 9 turns /
+  24 s / under $0.01; out-of-scope Write held with the right kind and reason, denied, file not created,
+  agent didn't retry.
+- Trial task, sandbox and agents removed afterwards. Tests: 21 harness tests + all dashboard suites pass.
+- **Learned for H6/H7:** a reviewer that should run tests needs either its commands pre-approved
+  ("always") or a narrower persona allowing test runs; worth a "reviewer can run tests in scope" option.

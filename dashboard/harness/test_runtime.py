@@ -272,6 +272,27 @@ async def test_auto_routes_each_turn(tmp):
     assert FakeClient.instances[0].prompts[-1] == "do the rest"  # override prefix stripped
 
 
+@run
+async def test_tracker_tools(tmp):
+    from .. import tracker
+    h, _, proj = make(tmp)
+    task = tracker.create_task(proj, "Add slugify", brief="Write slugify()", acceptance=["tests pass"])
+    tracker.set_status(proj, task["id"], "doing", actor="user")
+    await h.create("planner", "scout", "app")
+    h._session("planner")
+    got = (await bus_call(h, "planner", "read_task", {"task": "#" + task["id"]}))["content"][0]["text"]
+    assert "Add slugify" in got and "tests pass" in got
+    r = await bus_call(h, "planner", "post_update", {"task": task["id"], "text": "built and reviewed", "status": "review"})
+    assert not r.get("is_error"), r
+    t2 = tracker.read_task(proj, task["id"])
+    assert t2["status"] == "review" and any("agent planner: built and reviewed" in u for u in t2["updates"])
+    r = await bus_call(h, "planner", "post_update", {"task": task["id"], "text": "closing", "status": "done"})
+    assert r.get("is_error") and tracker.read_task(proj, task["id"])["status"] == "review"
+    r = await bus_call(h, "planner", "read_task", {"task": "nope"})
+    assert r.get("is_error")
+    assert any(m["sender"] == "tracker" for m in store.messages(h.conn, "planner"))
+
+
 def test_routing_rules_load():
     from .routing import decide
     assert decide("commit and push it")[:2] == ("light", "git")
@@ -444,7 +465,7 @@ async def test_delete_releases_waiting_hold(tmp):
 TESTS = [test_create_validates, test_turn_logs_usage_and_session, test_teammate_prefix_and_serial_inbox,
          test_model_change_switches_live, test_idle_close_then_resume, test_pause_holds_inbox,
          test_delete_stops_and_forgets, test_bus_relays_with_thread_and_hops, test_ping_pong_stops_at_hop_limit,
-         test_daily_cap_parks_message_and_pauses, test_auto_routes_each_turn, test_routing_rules_load,
+         test_daily_cap_parks_message_and_pauses, test_auto_routes_each_turn, test_tracker_tools, test_routing_rules_load,
          test_resolve_model_auto_clamps, test_gate_policy, test_hold_approve_always_then_auto_allow,
          test_hold_deny_and_expire, test_push_is_never_always_allowed, test_writer_scope_locks, test_kill_switch,
          test_delete_releases_waiting_hold]

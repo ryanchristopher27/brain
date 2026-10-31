@@ -35,7 +35,7 @@ from typing import Any, Awaitable, Callable
 from claude_agent_sdk import (AgentDefinition, AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, HookMatcher, ResultMessage,
                               TextBlock, ToolUseBlock, create_sdk_mcp_server, tool)
 
-from .. import data
+from .. import data, tracker
 from ..process_manager import _audit
 from . import routing, store
 
@@ -61,7 +61,8 @@ DESTRUCTIVE_RE = re.compile(r"\brm\s+-\w*[rf]|\bgit\s+(reset\s+--hard|clean\s+-\
 DENY_TOOLS = {"Task", "Agent"}  # agents don't spawn agents in v1
 HOLD_SECS = 900
 SESSION_SETTINGS = json.dumps({"enabledPlugins": {"model-router@brain": False}})
-BUS_TOOLS = ["mcp__bus__send_message", "mcp__bus__list_agents"]
+BUS_TOOLS = ["mcp__bus__send_message", "mcp__bus__list_agents", "mcp__bus__read_task", "mcp__bus__post_update"]
+AGENT_STATUSES = ("doing", "review")  # agents move work along; only the user closes it
 
 
 def persona_agent(persona: str) -> AgentDefinition:
@@ -238,7 +239,8 @@ class Session:
                     "Messages from teammates arrive prefixed with [from <name>]; messages from the user are unprefixed. "
                     "Your plain replies are shown to the user only. To reach a teammate, call the send_message "
                     "tool; list_agents shows who is on the team. Message a teammate only when it moves the work "
-                    "forward: hand-off chains and threads have hard limits.")
+                    "forward: hand-off chains and threads have hard limits. read_task and post_update work on this "
+                    "project's tracker; post progress there, and never claim a task is done (the user closes tasks).")
         if a["brief"]:
             identity += f"\nYour role: {a['brief']}"
         opts = ClaudeAgentOptions(
@@ -283,7 +285,45 @@ class Session:
                     for v in self.h.list() if v["name"] != self.name]
             return {"content": [{"type": "text", "text": "\n".join(rows) or "No other agents yet."}]}
 
-        return [send_message, list_agents]
+        def task_root() -> Path:
+            return Path(self.h._agent(self.name)["scope_root"])
+
+        def text(msg: str, error: bool = False) -> dict:
+            return {"content": [{"type": "text", "text": msg}], **({"is_error": True} if error else {})}
+
+        @tool("read_task", "Read a task from this project's tracker by its id (e.g. 'a1b2c3').", {"task": str})
+        async def read_task(args):
+            t = tracker.read_task(task_root(), str(args.get("task", "")).lstrip("#"))
+            if t is None:
+                return text(f"No task {args.get('task')!r} in this project.", True)
+            body = [f"#{t['id']} {t['title']} [{t['status']}]", t["brief"] or "(no brief)"]
+            if t["acceptance"]:
+                body += ["Acceptance:", *[f"- {x}" for x in t["acceptance"]]]
+            body += ["Recent updates:", *t["updates"][-5:]]
+            return text("\n".join(body))
+
+        @tool("post_update", "Add an update to a tracker task, optionally moving it to 'doing' or 'review'. "
+              "Agents can't close tasks; the user moves them to done.",
+              {"type": "object", "properties": {"task": {"type": "string"}, "text": {"type": "string"},
+                                                "status": {"type": "string", "enum": list(AGENT_STATUSES)}},
+               "required": ["task", "text"]})
+        async def post_update(args):
+            tid, note, status = str(args.get("task", "")).lstrip("#"), str(args.get("text", "")).strip(), args.get("status")
+            if not note or len(note) > 4000:
+                return text("Update text must be 1-4000 characters.", True)
+            if status and status not in AGENT_STATUSES:
+                return text(f"Agents can only move tasks to {', '.join(AGENT_STATUSES)}.", True)
+            try:
+                tracker.add_update(task_root(), tid, f"agent {self.name}", note)
+                if status:
+                    tracker.set_status(task_root(), tid, status, actor="agent")
+            except tracker.TrackerError as e:
+                return text(str(e), True)
+            await self.h._log(self.name, "system", "tracker", f"#{tid}: {note[:200]}" + (f" → {status}" if status else ""),
+                              thread=self.thread, hop=self.hop)
+            return text(f"Updated #{tid}" + (f" and moved it to {status}." if status else "."))
+
+        return [send_message, list_agents, read_task, post_update]
 
     async def _turn(self, sender: str, text: str) -> None:
         a = self.h._agent(self.name)
