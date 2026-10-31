@@ -544,7 +544,7 @@ async def ws_endpoint(ws: WebSocket):
 
 # Serve the frontend last, so /api/* and /ws take precedence over the static mount.
 
-# ── agent harness (H1–H2): long-lived named agents that message each other ────────────────────────────────────────────
+# ── agent harness (H1–H3): long-lived agents that message each other, behind a permission gate ────────────────────────────────────────────
 class AgentReq(BaseModel):
     name: str
     persona: str
@@ -607,6 +607,27 @@ async def harness_messages(name: str, limit: int = 200):
 @app.post("/api/harness/agents/{name}/message")
 async def harness_message(name: str, req: MessageReq):
     return await _harness(lambda: harness.send(name, req.text))
+
+
+class DecideReq(BaseModel):
+    always: bool = False
+
+
+@app.get("/api/harness/holds")
+async def harness_holds(status: str = "pending"):
+    return await _harness(lambda: asyncio.to_thread(harness_store.holds, harness.conn, status or None))
+
+
+@app.post("/api/harness/holds/{hold_id}/{decision}")
+async def harness_decide(hold_id: int, decision: str, req: DecideReq):
+    if decision not in ("approve", "deny"):
+        return JSONResponse({"error": "unknown decision"}, status_code=404)
+    return await _harness(lambda: harness.decide(hold_id, decision == "approve", req.always))
+
+
+@app.post("/api/harness/kill")
+async def harness_kill():
+    return await _harness(harness.kill)
 
 
 @app.post("/api/harness/agents/{name}/{op}")

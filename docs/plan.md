@@ -1526,3 +1526,28 @@ Findings that change the build:
 - Tests: 14 in `dashboard.harness.test_runtime` (bus relay with threads/hops, runaway ping-pong stopped
   at the hop limit, daily-cap park + resume, per-turn auto routing). Mod: validates, 12/12 tests.
   Live: two Haiku agents completed an ask → answer → report round trip (hops 0→1→2), about half a cent.
+
+## Agent Harness — H3 done (2026-10-31): permission gate
+- **Three-way gate** (PreToolUse hook, `runtime.gate_decision`):
+  - *Allow:* read tools, bus tools, read-only git, writes inside scope, commands approved "always" for that agent.
+  - *Hold for you:* writes outside scope, any other command (`git push` and destructive commands flagged
+    by kind), any unrecognised tool. The turn waits; the Hub decides; unanswered holds expire as denied
+    after 15 min (hook timeout set past that). The agent is told not to retry a denied action.
+  - *Deny:* `Task`/`Agent` (agents don't spawn agents in v1).
+- **"Always" approvals:** exact command, per agent, plain commands only — push and destructive commands
+  are asked every time.
+- **Writer scope locks:** checked when a scope is set (create/update): two writer personas can't share or
+  nest folders (409 naming the other agent). Read-only personas never lock. Deleting an agent frees it.
+- **Kill switch:** denies everything waiting, pauses every agent, interrupts live turns, closes sessions.
+- **Holds** persist in `holds` (status pending/approved/denied/expired; pending ones expire on restart).
+  Deleting an agent or stopping the server denies its waiting holds so no hook hangs.
+- **Audit:** hold decisions, denials and kills go to `~/.claude/brain-dashboard/audit.jsonl`.
+- API: `GET /api/harness/holds?status=pending`, `POST /api/harness/holds/{id}/{approve|deny}` (`{"always": bool}`),
+  `POST /api/harness/kill`. Agent views gain `state: "waiting"` + `hold` id, and `always`.
+- Tests: 20 in `dashboard.harness.test_runtime` (approve+always then auto-allow, deny, expiry, push never
+  "always", locks incl. nesting and release, kill switch, delete releases a waiting hold).
+- Live (Haiku builder): `echo` command held → approved "always" → ran; the second run went through with
+  no hold; overlapping writer scope refused. The agent declined the out-of-scope write itself, so that
+  hold path is covered by the tests (same code path as the command hold) rather than live.
+- Fixed during H3: test runs were writing to the real audit log; the audit sink is now injectable and
+  tests use their own. Entries from three earlier test runs remain in the real log (not removed).

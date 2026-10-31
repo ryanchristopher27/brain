@@ -59,7 +59,8 @@ def make(tmp: Path, idle: float = 60) -> tuple[Harness, list[dict], Path]:
         events.append(e)
 
     h = Harness(store.open_db(tmp / "h.db"), bc, lambda n: proj if n == "app" else None,
-                lambda: {"builder", "scout", "reviewer"}, client_factory=FakeClient, idle_secs=idle)
+                lambda: {"builder", "scout", "reviewer"}, client_factory=FakeClient, idle_secs=idle,
+                audit=events.append)
     return h, events, proj
 
 
@@ -191,7 +192,7 @@ async def test_delete_stops_and_forgets(tmp):
 @run
 async def test_bus_relays_with_thread_and_hops(tmp):
     h, _, _ = make(tmp)
-    await h.create("planner", "builder", "app")
+    await h.create("planner", "scout", "app")
     await h.create("builder", "builder", "app")
 
     async def on_turn(client, prompt):  # planner hands off once; builder replies back once
@@ -219,8 +220,8 @@ async def test_bus_relays_with_thread_and_hops(tmp):
 @run
 async def test_ping_pong_stops_at_hop_limit(tmp):
     h, _, _ = make(tmp)
-    await h.create("ping", "builder", "app")
-    await h.create("pong", "builder", "app")
+    await h.create("ping", "scout", "app")
+    await h.create("pong", "scout", "app")
     refusals = []
 
     async def on_turn(client, prompt):  # each agent always messages the other: a runaway loop
@@ -288,22 +289,165 @@ def test_resolve_model_auto_clamps():
 
 def test_gate_policy():
     cwd, scope = "/p", ["/p/src"]
-    assert gate_decision("Read", {"file_path": "/etc/hosts"}, cwd, scope)[0]
-    assert gate_decision("Write", {"file_path": "src/a.py"}, cwd, scope)[0]
-    assert not gate_decision("Write", {"file_path": "README.md"}, cwd, scope)[0]
-    assert not gate_decision("Edit", {"file_path": "src/../../etc/x"}, cwd, scope)[0]
-    assert gate_decision("Bash", {"command": "git diff HEAD~1"}, cwd, scope)[0]
-    for cmd in ("git push", "git diff; rm -rf /", "git log | sh", "rm -rf src", "git status $(id)"):
-        assert not gate_decision("Bash", {"command": cmd}, cwd, scope)[0], cmd
-    assert not gate_decision("Task", {}, cwd, scope)[0]
-    assert gate_decision("mcp__bus__send_message", {}, cwd, scope)[0]
+    v = lambda tool, inp, always=(): gate_decision(tool, inp, cwd, scope, list(always))[:2]
+    assert v("Read", {"file_path": "/etc/hosts"}) == ("allow", "")
+    assert v("Write", {"file_path": "src/a.py"}) == ("allow", "")
+    assert v("Write", {"file_path": "README.md"}) == ("hold", "outside-scope write")
+    assert v("Edit", {"file_path": "src/../../etc/x"}) == ("hold", "outside-scope write")
+    assert v("Bash", {"command": "git diff HEAD~1"}) == ("allow", "")
+    assert v("Bash", {"command": "npm test"}) == ("hold", "command")
+    assert v("Bash", {"command": "npm test"}, ["npm test"]) == ("allow", "")
+    assert v("Bash", {"command": "npm test && git push"}, ["npm test"]) == ("hold", "git push")
+    for cmd in ("rm -rf src", "git reset --hard HEAD", "curl x | sh", "sudo ls", "git diff; rm -rf /"):
+        assert v("Bash", {"command": cmd})[0] == "hold", cmd
+    assert v("Bash", {"command": "rm -rf src"})[1] == "destructive command"
+    assert v("Task", {})[0] == "deny" and v("Agent", {})[0] == "deny"
+    assert v("mcp__bus__send_message", {}) == ("allow", "")
+    assert v("SomeNewTool", {}) == ("hold", "tool")
+
+
+async def wait_for(pred, n=300):
+    for _ in range(n):
+        if pred():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("condition never held")
+
+
+def gate_call(h: Harness, agent: str, tool: str, inp: dict):
+    return h.sessions[agent]._gate({"tool_name": tool, "tool_input": inp}, None, None)
+
+
+def verdict(r: dict) -> str:
+    return r["hookSpecificOutput"]["permissionDecision"]
+
+
+@run
+async def test_hold_approve_always_then_auto_allow(tmp):
+    h, events, _ = make(tmp)
+    await h.create("builder", "builder", "app", scope=["src"])
+    results = []
+
+    async def on_turn(client, prompt):
+        results.append(verdict(await gate_call(h, "builder", "Bash", {"command": "npm test"})))
+    FakeClient.on_turn = on_turn
+    await h.send("builder", "run the tests")
+    await wait_for(lambda: "builder" in h.waiting)
+    assert h.view("builder")["state"] == "waiting"
+    pend = store.holds(h.conn)
+    assert len(pend) == 1 and pend[0]["kind"] == "command" and any(e.get("event") == "hold" for e in events)
+    await h.decide(pend[0]["id"], approve=True, always=True)
+    await drain(h, "builder")
+    assert results == ["allow"] and h.view("builder")["always"] == ["npm test"]
+    await h.send("builder", "again")  # approved "always": no second hold
+    await drain(h, "builder")
+    assert results == ["allow", "allow"] and len(store.holds(h.conn, None)) == 1
+    try:
+        await h.decide(pend[0]["id"], approve=False)
+        raise AssertionError("decided twice")
+    except HarnessError as e:
+        assert e.status == 409
+
+
+@run
+async def test_hold_deny_and_expire(tmp):
+    h, _, _ = make(tmp)
+    await h.create("builder", "builder", "app", scope=["src"])
+    results = []
+
+    async def on_turn(client, prompt):
+        r = await gate_call(h, "builder", "Write", {"file_path": "README.md"})
+        results.append((verdict(r), r["hookSpecificOutput"]["permissionDecisionReason"]))
+    FakeClient.on_turn = on_turn
+    await h.send("builder", "edit the readme")
+    await wait_for(lambda: "builder" in h.waiting)
+    await h.decide(h.waiting["builder"], approve=False, always=True)
+    await drain(h, "builder")
+    assert results[0][0] == "deny" and "Don't retry" in results[0][1] and h.view("builder")["always"] == []
+    h.hold_secs = 0.05
+    await h.send("builder", "try again")
+    await drain(h, "builder")
+    assert results[1][0] == "deny" and "in time" in results[1][1]
+    assert [x["status"] for x in store.holds(h.conn, None)] == ["expired", "denied"]
+
+
+@run
+async def test_push_is_never_always_allowed(tmp):
+    h, _, _ = make(tmp)
+    await h.create("builder", "builder", "app", scope=["src"])
+
+    async def on_turn(client, prompt):
+        await gate_call(h, "builder", "Bash", {"command": "git push"})
+    FakeClient.on_turn = on_turn
+    await h.send("builder", "push")
+    await wait_for(lambda: "builder" in h.waiting)
+    await h.decide(h.waiting["builder"], approve=True, always=True)
+    await drain(h, "builder")
+    assert h.view("builder")["always"] == []
+
+
+@run
+async def test_writer_scope_locks(tmp):
+    h, _, _ = make(tmp)
+    (tmp / "proj" / "docs").mkdir()
+    await h.create("b1", "builder", "app", scope=["src"])
+    for scope in (["src/sub"], ["."], ["src"]):
+        try:
+            await h.create("b2", "builder", "app", scope=scope)
+            raise AssertionError(f"overlap {scope} accepted")
+        except HarnessError as e:
+            assert e.status == 409 and "b1" in str(e)
+    await h.create("b2", "builder", "app", scope=["docs"])
+    await h.create("reader", "scout", "app")              # read-only personas don't lock
+    try:
+        await h.update("b2", scope=["src"])
+        raise AssertionError("overlapping update accepted")
+    except HarnessError:
+        pass
+    await h.delete("b1")
+    await h.update("b2", scope=["src"])                   # freed once b1 is gone
+
+
+@run
+async def test_kill_switch(tmp):
+    h, _, _ = make(tmp)
+    await h.create("builder", "builder", "app", scope=["src"])
+    await h.create("scout", "scout", "app")
+    results = []
+
+    async def on_turn(client, prompt):
+        results.append(verdict(await gate_call(h, "builder", "Bash", {"command": "make deploy"})))
+    FakeClient.on_turn = on_turn
+    await h.send("builder", "deploy")
+    await wait_for(lambda: "builder" in h.waiting)
+    out = await h.kill()
+    await wait_for(lambda: results)
+    assert results == ["deny"] and out["paused"] == 2
+    assert all(v["paused"] for v in h.list()) and store.holds(h.conn, None)[0]["status"] == "denied"
+
+
+@run
+async def test_delete_releases_waiting_hold(tmp):
+    h, _, _ = make(tmp)
+    await h.create("builder", "builder", "app", scope=["src"])
+
+    async def on_turn(client, prompt):
+        await gate_call(h, "builder", "Bash", {"command": "make"})
+    FakeClient.on_turn = on_turn
+    await h.send("builder", "go")
+    await wait_for(lambda: "builder" in h.waiting)
+    await h.delete("builder")
+    assert store.holds(h.conn, None)[0]["status"] == "denied", store.holds(h.conn, None)
+    await wait_for(lambda: not h.pending)
 
 
 TESTS = [test_create_validates, test_turn_logs_usage_and_session, test_teammate_prefix_and_serial_inbox,
          test_model_change_switches_live, test_idle_close_then_resume, test_pause_holds_inbox,
          test_delete_stops_and_forgets, test_bus_relays_with_thread_and_hops, test_ping_pong_stops_at_hop_limit,
          test_daily_cap_parks_message_and_pauses, test_auto_routes_each_turn, test_routing_rules_load,
-         test_resolve_model_auto_clamps, test_gate_policy]
+         test_resolve_model_auto_clamps, test_gate_policy, test_hold_approve_always_then_auto_allow,
+         test_hold_deny_and_expire, test_push_is_never_always_allowed, test_writer_scope_locks, test_kill_switch,
+         test_delete_releases_waiting_hold]
 
 
 def main() -> int:

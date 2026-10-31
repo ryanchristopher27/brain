@@ -11,9 +11,13 @@ by prompt: hop limit per hand-off chain, turn cap per thread, and a daily usage 
 (also passed to the SDK as max_budget_usd so a single turn can't overrun it). Auto-mode agents
 route each turn with the model-router mod's rules (routing.py).
 
-Safety baseline (H3 extends it with Hub approvals and scope locks): a PreToolUse hook — not an
-allow list, which H0 showed can shadow can_use_tool — permits read tools, read-only git, and
-writes inside the agent's scope folders; everything else is denied with a reason the agent sees.
+Permission gate (H3): a PreToolUse hook — not an allow list, which H0 showed can shadow
+can_use_tool — sorts every tool call three ways. Allowed: read tools, bus tools, read-only git,
+writes inside the agent's scope, and commands you approved "always" for that agent. Held: writes
+outside scope, other commands (git push and destructive ones flagged), any other tool — the turn
+waits while the Hub shows an approval; unanswered holds expire as denied. Denied: spawning
+subagents. Writer agents can't share a scope (checked when scopes are set), and a kill switch
+pauses everything and denies anything waiting. Decisions go to the dashboard audit log.
 Sessions never get ANTHROPIC_API_KEY (keeps usage on the claude.ai subscription) and run with the
 model-router mod disabled (H0: it overrode pinned models).
 """
@@ -32,6 +36,7 @@ from claude_agent_sdk import (AgentDefinition, AssistantMessage, ClaudeAgentOpti
                               TextBlock, ToolUseBlock, create_sdk_mcp_server, tool)
 
 from .. import data
+from ..process_manager import _audit
 from . import routing, store
 
 IDLE_SECS = 600
@@ -49,6 +54,12 @@ PERSONA_MODEL = {"scout": "claude-haiku-5-5", "operator": "claude-haiku-5-5"}  #
 READ_TOOLS = {"Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "TodoWrite", "NotebookRead"}
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 GIT_READ_RE = re.compile(r"^\s*git\s+(log|diff|show|status|branch|blame)\b[^;&|`$<>]*$")
+GIT_PUSH_RE = re.compile(r"\bgit\s+push\b")
+DESTRUCTIVE_RE = re.compile(r"\brm\s+-\w*[rf]|\bgit\s+(reset\s+--hard|clean\s+-\w*f|checkout\s+--\s|branch\s+-D)|"
+                            r"\bsudo\b|\bchmod\s+-R|\bmkfs|\bdd\s+if=|\|\s*(sh|bash|zsh)\b|\bdrop\s+(table|database)\b",
+                            re.I)
+DENY_TOOLS = {"Task", "Agent"}  # agents don't spawn agents in v1
+HOLD_SECS = 900
 SESSION_SETTINGS = json.dumps({"enabledPlugins": {"model-router@brain": False}})
 BUS_TOOLS = ["mcp__bus__send_message", "mcp__bus__list_agents"]
 
@@ -124,30 +135,34 @@ def resolve_model(m: dict, tier: str = "standard") -> tuple[str, str]:
 
 
 # ── tool gate ───────────────────────────────────────────────────────────────────────────────
-def gate_decision(tool: str, inp: dict, cwd: str, scope: list[str]) -> tuple[bool, str]:
+def gate_decision(tool: str, inp: dict, cwd: str, scope: list[str],
+                  always: list[str] = ()) -> tuple[str, str, str]:
+    """(verdict, kind, reason) with verdict allow | hold | deny."""
     if tool in READ_TOOLS or tool.startswith("mcp__bus__"):
-        return True, ""
+        return "allow", "", ""
+    if tool in DENY_TOOLS:
+        return "deny", "tool", "Harness agents don't start subagents; message a teammate instead."
     if tool in WRITE_TOOLS:
         raw = inp.get("file_path") or inp.get("notebook_path") or ""
         target = (Path(cwd) / raw).resolve() if raw else None
         if target and any(target.is_relative_to(Path(s)) for s in scope):
-            return True, ""
-        return False, f"{raw or 'that path'} is outside your scope ({', '.join(scope)})."
-    if tool == "Bash" and GIT_READ_RE.match(inp.get("command", "")):
-        return True, ""
-    return False, f"{tool} isn't available to harness agents yet (approvals arrive in H3)."
+            return "allow", "", ""
+        return "hold", "outside-scope write", f"{raw or 'that path'} is outside your scope ({', '.join(scope)})."
+    if tool == "Bash":
+        cmd = inp.get("command", "")
+        if GIT_READ_RE.match(cmd) or cmd.strip() in always:
+            return "allow", "", ""
+        if GIT_PUSH_RE.search(cmd):
+            return "hold", "git push", "Pushing needs your approval."
+        if DESTRUCTIVE_RE.search(cmd):
+            return "hold", "destructive command", "This command can destroy work; it needs your approval."
+        return "hold", "command", "Commands need your approval."
+    return "hold", "tool", f"{tool} needs your approval."
 
 
-def make_gate(cwd: str, scope: list[str], on_deny: Callable[[str, str], None]):
-    async def gate(input_data: dict, tool_use_id: str | None, context: Any) -> dict:
-        tool, inp = input_data.get("tool_name", ""), input_data.get("tool_input", {}) or {}
-        ok, reason = gate_decision(tool, inp, cwd, scope)
-        if not ok:
-            on_deny(tool, reason)
-        return {"hookSpecificOutput": {"hookEventName": "PreToolUse",
-                                       "permissionDecision": "allow" if ok else "deny",
-                                       "permissionDecisionReason": reason or "within harness policy"}}
-    return gate
+def _decision(ok: bool, reason: str) -> dict:
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow" if ok else "deny",
+                                   "permissionDecisionReason": reason or "within harness policy"}}
 
 
 # ── sessions ────────────────────────────────────────────────────────────────────────────────
@@ -167,6 +182,8 @@ class Session:
         self.idle: asyncio.TimerHandle | None = None
 
     def state(self, a: dict) -> str:
+        if self.name in self.h.waiting:
+            return "waiting"
         if a["paused"]:
             return "paused"
         if self.busy or self.held or not self.inbox.empty():
@@ -230,12 +247,22 @@ class Session:
             extra_args={"agent": f"harness-{a['persona']}"}, resume=a["session_id"], permission_mode="default",
             mcp_servers={"bus": self._bus()}, max_budget_usd=max(self.h.remaining(self.name), 0.01),
             system_prompt={"type": "preset", "preset": "claude_code", "append": identity},
-            hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[
-                make_gate(cwd, a["scope"], lambda t, r: self.h._spawn_log(
-                    self.name, "system", "gate", f"denied {t}: {r}", None, None, self.thread, self.hop))])]})
+            hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[self._gate], timeout=HOLD_SECS + 60)]})
         self.client = self.h.client_factory(opts)
         await self.client.connect()
         self.model, self.cost_seen = model, 0.0
+
+    async def _gate(self, input_data: dict, tool_use_id: str | None, context: Any) -> dict:
+        tool, inp = input_data.get("tool_name", ""), input_data.get("tool_input", {}) or {}
+        a = self.h._agent(self.name)
+        verdict, kind, reason = gate_decision(tool, inp, a["scope_root"], a["scope"], a["always"])
+        if verdict == "hold":
+            ok, why = await self.h.hold(self.name, tool, inp, kind, reason)
+            return _decision(ok, why)
+        if verdict == "deny":
+            await self.h._log(self.name, "system", "gate", f"denied {tool}: {reason}", thread=self.thread, hop=self.hop)
+            self.h.audit({"harness": "deny", "agent": self.name, "tool": tool, "reason": reason})
+        return _decision(verdict == "allow", reason)
 
     def _bus(self):
         return create_sdk_mcp_server("bus", tools=self.bus_tools())
@@ -319,6 +346,11 @@ class Session:
         await self.close()
 
 
+def _hold_summary(h: dict) -> str:
+    inp = h["input"]
+    return f"{h['kind']}: {h['tool']} {inp.get('command') or inp.get('file_path') or ''}".strip()
+
+
 def _tool_summary(b: ToolUseBlock) -> str:
     inp = b.input or {}
     detail = inp.get("file_path") or inp.get("command") or inp.get("pattern") or inp.get("url") or ""
@@ -328,11 +360,14 @@ def _tool_summary(b: ToolUseBlock) -> str:
 class Harness:
     def __init__(self, conn, broadcast: Callable[[dict], Awaitable[None]],
                  project_root: Callable[[str], Path | None], personas: Callable[[], set[str]],
-                 client_factory=ClaudeSDKClient, idle_secs: float = IDLE_SECS):
+                 client_factory=ClaudeSDKClient, idle_secs: float = IDLE_SECS, audit=_audit):
         self.conn, self.broadcast = conn, broadcast
         self.project_root, self.personas = project_root, personas
-        self.client_factory, self.idle_secs = client_factory, idle_secs
+        self.client_factory, self.idle_secs, self.audit = client_factory, idle_secs, audit
         self.sessions: dict[str, Session] = {}
+        self.pending: dict[int, asyncio.Future] = {}   # hold id → decision future
+        self.waiting: dict[str, int] = {}              # agent → hold id it's blocked on
+        self.hold_secs = HOLD_SECS
 
     # views
     def _agent(self, name: str) -> dict:
@@ -347,10 +382,11 @@ class Harness:
         a = self._agent(name)
         s = self.sessions.get(name)
         model, tier = resolve_model(a["model"])
-        return {**{k: a[k] for k in ("name", "persona", "project", "brief", "scope", "model", "limits", "paused",
+        return {**{k: a[k] for k in ("name", "persona", "project", "brief", "scope", "model", "limits", "always", "paused",
                                      "usage_usd", "session_id")},
                 "usage_today": round(store.usage_since(self.conn, name, day_start()), 4),
                 "state": s.state(a) if s else ("paused" if a["paused"] else ("asleep" if a["session_id"] else "new")),
+                "hold": self.waiting.get(name),
                 "current_model": (s.model if s and s.model else model), "tier": tier,
                 "queued": s.inbox.qsize() if s else 0}
 
@@ -358,6 +394,22 @@ class Harness:
         return [self.view(a["name"]) for a in store.list_agents(self.conn)]
 
     # roster
+    def _writer(self, persona: str) -> bool:
+        return any(not p["read_only"] for p in data.read_agents() if p["name"] == persona)
+
+    def _check_lock(self, name: str, persona: str, scope: list[str]) -> None:
+        """Writer agents can't share folders: one writer per scope, no nesting either way."""
+        if not self._writer(persona):
+            return
+        for other in store.list_agents(self.conn):
+            if other["name"] == name or not self._writer(other["persona"]):
+                continue
+            for mine in map(Path, scope):
+                for theirs in map(Path, other["scope"]):
+                    if mine.is_relative_to(theirs) or theirs.is_relative_to(mine):
+                        raise HarnessError(f"{mine} overlaps {other['name']}'s scope ({theirs}); two writers "
+                                           "can't share a folder. Narrow one scope or remove that agent.", 409)
+
     def _clean_scope(self, project: str, scope: list[str] | None) -> list[str]:
         root = self.project_root(project)
         if root is None:
@@ -383,7 +435,9 @@ class Harness:
             raise HarnessError("brief is too long")
         m = clean_model(model or {}, default_model(persona))
         lim = clean_limits(limits or {}, DEFAULT_LIMITS)
-        store.create_agent(self.conn, name, persona, project, brief, self._clean_scope(project, scope), m, lim)
+        sc = self._clean_scope(project, scope)
+        self._check_lock(name, persona, sc)
+        store.create_agent(self.conn, name, persona, project, brief, sc, m, lim)
         await self._changed(name)
         return self.view(name)
 
@@ -397,6 +451,7 @@ class Harness:
             fields["brief"] = brief
         if scope is not None:
             fields["scope"] = self._clean_scope(a["project"], scope)
+            self._check_lock(name, a["persona"], fields["scope"])
         if model is not None:
             fields["model"] = clean_model(model, a["model"])
         if limits is not None:
@@ -411,6 +466,7 @@ class Harness:
 
     async def delete(self, name: str) -> None:
         self._agent(name)
+        self._deny_pending(name)
         s = self.sessions.pop(name, None)
         if s:
             await s.shutdown()
@@ -476,7 +532,69 @@ class Harness:
             await self.sessions[name].close()
         return self.view(name)
 
+    async def hold(self, name: str, tool: str, inp: dict, kind: str, reason: str) -> tuple[bool, str]:
+        """Park a tool call until the user decides in the Hub (or it expires as denied)."""
+        h = store.create_hold(self.conn, name, tool, inp, kind, reason)
+        fut = asyncio.get_running_loop().create_future()
+        self.pending[h["id"]], self.waiting[name] = fut, h["id"]
+        s = self.sessions.get(name)
+        await self._log(name, "system", "gate", f"waiting for approval: {_hold_summary(h)}",
+                        thread=s.thread if s else None, hop=s.hop if s else 0)
+        await self.broadcast({"type": "harness", "event": "hold", "hold": h})
+        await self._changed(name)
+        try:
+            ok = await asyncio.wait_for(asyncio.shield(fut), self.hold_secs)
+        except asyncio.TimeoutError:
+            store.decide_hold(self.conn, h["id"], "expired")
+            ok = False
+        finally:
+            self.pending.pop(h["id"], None)
+            self.waiting.pop(name, None)
+        status = store.get_hold(self.conn, h["id"])["status"]
+        self.audit({"harness": "hold", "agent": name, "tool": tool, "kind": kind, "input": inp, "status": status})
+        await self.broadcast({"type": "harness", "event": "hold", "hold": store.get_hold(self.conn, h["id"])})
+        await self._changed(name)
+        return ok, ("Approved by the user." if ok else
+                    "The user didn't approve this" + (" in time." if status == "expired" else ".") +
+                    " Don't retry it; continue without it or ask the user.")
+
+    async def decide(self, hold_id: int, approve: bool, always: bool = False) -> dict:
+        h = store.get_hold(self.conn, hold_id)
+        if h is None:
+            raise HarnessError("unknown hold", 404)
+        if h["status"] != "pending" or hold_id not in self.pending:
+            raise HarnessError(f"already {h['status']}", 409)
+        h = store.decide_hold(self.conn, hold_id, "approved" if approve else "denied")
+        if approve and always and h["tool"] == "Bash" and h["kind"] == "command":
+            a = self._agent(h["agent"])  # only plain commands; push and destructive ones are asked every time
+            store.update_agent(self.conn, h["agent"], always=sorted({*a["always"], h["input"].get("command", "").strip()}))
+        self.pending[hold_id].set_result(approve)
+        return h
+
+    def _deny_pending(self, agent: str | None = None) -> None:
+        for hold_id, fut in list(self.pending.items()):
+            if agent is None or self.waiting.get(agent) == hold_id:
+                store.decide_hold(self.conn, hold_id, "denied")
+                if not fut.done():
+                    fut.set_result(False)
+
+    async def kill(self) -> dict:
+        """Kill switch: deny everything waiting, pause every agent, stop live turns."""
+        self._deny_pending()
+        for a in store.list_agents(self.conn):
+            await self.pause(a["name"])
+        for s in self.sessions.values():
+            if s.client and s.busy:
+                try:
+                    await s.client.interrupt()
+                except Exception:
+                    pass
+            await s.close()
+        self.audit({"harness": "kill"})
+        return {"paused": len(store.list_agents(self.conn))}
+
     async def stop_all(self) -> None:
+        self._deny_pending()
         for s in list(self.sessions.values()):
             await s.shutdown()
         self.sessions.clear()

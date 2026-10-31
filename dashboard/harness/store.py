@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS agents (
     session_id  TEXT,
     paused      INTEGER NOT NULL DEFAULT 0,
     limits      TEXT NOT NULL DEFAULT '{}',   -- JSON, e.g. {"daily_usd": 2.0}
+    always      TEXT NOT NULL DEFAULT '[]',   -- JSON list of exact commands approved "always" for this agent
     usage_usd   REAL NOT NULL DEFAULT 0,
     created_at  REAL NOT NULL,
     updated_at  REAL NOT NULL
@@ -41,11 +42,22 @@ CREATE TABLE IF NOT EXISTS messages (
     route   TEXT                           -- why this model: 'pinned' or 'auto: <tier> (<why>)'
 );
 CREATE INDEX IF NOT EXISTS messages_agent ON messages(agent, id);
+CREATE TABLE IF NOT EXISTS holds (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent       TEXT NOT NULL,
+    ts          REAL NOT NULL,
+    tool        TEXT NOT NULL,
+    input       TEXT NOT NULL,             -- JSON tool input
+    kind        TEXT NOT NULL,             -- outside-scope write | command | destructive command | git push | tool
+    reason      TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | denied | expired
+    decided_at  REAL
+);
 """
 
-_JSON = ("scope", "model", "limits")
+_JSON = ("scope", "model", "limits", "always")
 # Columns added after a table first shipped: (table, column, definition).
-_ADDED = [("agents", "limits", "TEXT NOT NULL DEFAULT '{}'"), ("messages", "thread", "TEXT"),
+_ADDED = [("agents", "limits", "TEXT NOT NULL DEFAULT '{}'"), ("agents", "always", "TEXT NOT NULL DEFAULT '[]'"), ("messages", "thread", "TEXT"),
           ("messages", "hop", "INTEGER NOT NULL DEFAULT 0"), ("messages", "route", "TEXT")]
 
 
@@ -59,6 +71,8 @@ def open_db(path: Path = DB_PATH) -> sqlite3.Connection:
         if col not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
     conn.execute("CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread)")
+    # Holds can't outlive the process that awaited them: anything still pending was never answered.
+    conn.execute("UPDATE holds SET status='expired', decided_at=? WHERE status='pending'", (time.time(),))
     conn.commit()
     return conn
 
@@ -136,3 +150,30 @@ def usage_since(conn, agent: str, since: float) -> float:
 def thread_turns(conn, thread: str) -> int:
     """Agent turns taken in a thread, across every agent."""
     return conn.execute("SELECT COUNT(*) FROM messages WHERE thread=? AND role='assistant'", (thread,)).fetchone()[0]
+
+
+def create_hold(conn, agent: str, tool: str, inp: dict, kind: str, reason: str) -> dict:
+    cur = conn.execute("INSERT INTO holds(agent,ts,tool,input,kind,reason) VALUES(?,?,?,?,?,?)",
+                       (agent, time.time(), tool, json.dumps(inp), kind, reason))
+    conn.commit()
+    return get_hold(conn, cur.lastrowid)
+
+
+def get_hold(conn, hold_id: int) -> dict | None:
+    r = conn.execute("SELECT * FROM holds WHERE id=?", (hold_id,)).fetchone()
+    return {**dict(r), "input": json.loads(r["input"])} if r else None
+
+
+def decide_hold(conn, hold_id: int, status: str) -> dict | None:
+    conn.execute("UPDATE holds SET status=?, decided_at=? WHERE id=? AND status='pending'",
+                 (status, time.time(), hold_id))
+    conn.commit()
+    return get_hold(conn, hold_id)
+
+
+def holds(conn, status: str | None = "pending", limit: int = 100) -> list[dict]:
+    q, args = "SELECT id FROM holds", []
+    if status:
+        q, args = q + " WHERE status=?", [status]
+    rows = conn.execute(q + " ORDER BY id DESC LIMIT ?", (*args, limit)).fetchall()
+    return [get_hold(conn, r[0]) for r in rows]
