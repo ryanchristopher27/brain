@@ -1487,3 +1487,20 @@ Findings that change the build:
 - The SDK runs its own bundled CLI (2.1.316), not the installed 2.1.289. Auth and `~/.claude`
   config are shared, so this is fine; note it when debugging version-specific behaviour.
 - Probe cost was a few cents of usage-equivalent on Haiku/Sonnet.
+
+## Agent Harness — H1 done (2026-10-31): session runtime + store
+- `dashboard/harness/store.py` — SQLite `~/.claude/brain-dashboard/harness.db`: `agents` (persona, project,
+  brief, scope, model settings, session id, paused, usage) + `messages` (role, sender, text, model, cost).
+- `dashboard/harness/runtime.py` — `Harness` + per-agent `Session`: inbox handled one turn at a time;
+  connect on demand, close after 10 min idle, resume by session id; pinned/auto model settings
+  (auto clamps to floor/ceiling; per-turn classification is H2) with live `set_model`; teammate
+  messages arrive as `[from <name>]`; events on the hub websocket as `{"type":"harness", ...}`.
+- Baseline gate (PreToolUse hook): read tools, read-only git, bus tools, and writes inside scope are
+  allowed; everything else denied with a reason logged to the timeline. H3 adds Hub approvals + locks.
+- API: `GET/POST /api/harness/agents`, `PATCH/DELETE /api/harness/agents/{name}`,
+  `GET …/{name}/messages`, `POST …/{name}/message`, `POST …/{name}/{pause|resume|stop}`.
+- Tests: `./voice/.venv/bin/python -m dashboard.harness.test_runtime` (9, fake SDK client, no usage).
+- Live-verified through the API: Haiku→Sonnet switch mid-session, stop then resume recalls context,
+  in-scope write allowed, out-of-scope Write and Bash denied by the hook (files not created).
+- Observed cost: a Sonnet turn on a fresh session is ~$0.10 equivalent (Claude Code system prompt + tools
+  load each connect). Worth watching when caps are set in H2; keeping sessions warm while busy helps.

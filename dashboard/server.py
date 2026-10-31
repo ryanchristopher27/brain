@@ -25,6 +25,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import data, devstatus, projects as projects_mod, registry, resources as resources_mod, services as services_mod, testusers as testusers_mod, tracker
+from .harness import store as harness_store
+from .harness.runtime import Harness, HarnessError
 from .process_manager import ProcessManager, SpawnError
 from .voice_bridge import VoiceBridge
 
@@ -80,6 +82,8 @@ class Hub:
 hub = Hub()
 bridge = VoiceBridge(VOICE_WS, hub.broadcast)
 pm = ProcessManager(hub, claude_bin=shutil.which("claude") or "claude")
+harness = Harness(harness_store.open_db(), hub.broadcast, lambda n: _project_root(n),
+                  lambda: {a["name"] for a in data.read_agents()})
 
 
 @contextlib.asynccontextmanager
@@ -89,6 +93,7 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         await pm.stop_all()  # never leave spawned agents running past the server
+        await harness.stop_all()  # sessions resume by id after restart
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -538,6 +543,78 @@ async def ws_endpoint(ws: WebSocket):
 
 
 # Serve the frontend last, so /api/* and /ws take precedence over the static mount.
+
+# ── agent harness (H1): long-lived named agents ────────────────────────────────────────────
+class AgentReq(BaseModel):
+    name: str
+    persona: str
+    project: str
+    brief: str = ""
+    scope: list[str] | None = None
+    model: dict | None = None
+
+
+class AgentPatch(BaseModel):
+    brief: str | None = None
+    scope: list[str] | None = None
+    model: dict | None = None
+
+
+class MessageReq(BaseModel):
+    text: str
+
+
+async def _harness(call):
+    try:
+        return JSONResponse(await call())
+    except HarnessError as e:
+        return JSONResponse({"error": str(e)}, status_code=e.status)
+
+
+@app.get("/api/harness/agents")
+async def harness_agents():
+    return await _harness(lambda: asyncio.to_thread(harness.list))
+
+
+@app.post("/api/harness/agents")
+async def harness_create(req: AgentReq):
+    return await _harness(lambda: harness.create(req.name, req.persona, req.project, req.brief, req.scope, req.model))
+
+
+@app.patch("/api/harness/agents/{name}")
+async def harness_update(name: str, req: AgentPatch):
+    return await _harness(lambda: harness.update(name, req.brief, req.scope, req.model))
+
+
+@app.delete("/api/harness/agents/{name}")
+async def harness_delete(name: str):
+    async def go():
+        await harness.delete(name)
+        return {"ok": True}
+    return await _harness(go)
+
+
+@app.get("/api/harness/agents/{name}/messages")
+async def harness_messages(name: str, limit: int = 200):
+    async def go():
+        harness.view(name)
+        return harness_store.messages(harness.conn, name, max(1, min(limit, 1000)))
+    return await _harness(go)
+
+
+@app.post("/api/harness/agents/{name}/message")
+async def harness_message(name: str, req: MessageReq):
+    return await _harness(lambda: harness.send(name, req.text))
+
+
+@app.post("/api/harness/agents/{name}/{op}")
+async def harness_op(name: str, op: str):
+    fn = {"pause": harness.pause, "resume": harness.resume, "stop": harness.stop}.get(op)
+    if fn is None:
+        return JSONResponse({"error": "unknown op"}, status_code=404)
+    return await _harness(lambda: fn(name))
+
+
 app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
 
 
