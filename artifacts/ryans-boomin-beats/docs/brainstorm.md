@@ -811,3 +811,527 @@ native-only win early instead of at the end of a long rebuild.
 3. Decide the Xcode project shape: separate repo or a `src/ios/` directory alongside `src/web/`
 4. Pick the iOS minimum target and the networking approach (hand-rolled `URLSession` client vs. generating one from the FastAPI OpenAPI schema — the latter is already exported)
 5. Define acceptance for P1: PKCE login completes, token persists in Keychain across launches, Profile renders real top artists/tracks, and a simulator screenshot loop is in place
+
+---
+
+# AI DJ Companion (2026-10-17)
+
+## Problem / Opportunity
+
+The music apps people already use have two queue modes, and neither one helps. Spotify DJ and
+autoplay take over the queue completely. Manual queueing gives no help at all. Nothing sits in
+between: an assistant that helps you **build** the queue, suggesting what plays next, while you stay
+in charge of what actually goes in.
+
+This is `ROADMAP.md` goal #4 (Natural-language DJ), reframed. The DJ is a companion that suggests
+and assists, and the user stays in control of the queue. A chat window that drives playback is not
+the goal.
+
+## Goals
+
+- A clean now-playing view with playback control, while music plays through the user's own provider
+  (Spotify)
+- Suggestions for what to play or queue next, offered as **moves**: some keep the current vibe,
+  others change it on purpose
+- An adjustable control level, from "only when asked" to "steers toward a goal"
+- Hosting as the main use, and equally usable for solo listening by anyone who wants to keep
+  control of the queue
+- Guest requests are in scope, at lower priority
+
+## Audience
+
+The host: the owner, on their iPhone, at a party, dinner or road trip. Guests never sign in to
+Boomin Beats. They interact only through the provider app (for example a Spotify Jam). The
+Development Mode user cap therefore doesn't constrain hosting.
+
+## Constraints
+
+- **iOS first.** Builds on the P1 iOS app (PKCE auth, Profile).
+- **No Spotify vibe data.** `/recommendations` returns 404 and `/audio-features` returns 403 on this
+  client ID (audits in `plan.md`, 2026-08-03). Vibe must come from LLM + Last.fm tags, following the
+  pattern `song_profile.py` already uses.
+- **Search is capped at 10 results** (February 2026 migration), which is enough to validate a
+  handful of suggestions.
+- **The Spotify queue is append-only**, both in the Web API and in the iOS SDK (App Remote). The
+  queue can be read and added to, but not reordered, removed from or inserted into. The 2026-08-03
+  iOS brainstorm expected the SDK to unlock "real" queue control, and it doesn't.
+- **iOS suspends backgrounded apps**, so the app cannot reliably send the next track at song end
+  while it is in the background.
+- **Playback control requires Premium**, which the owner has.
+- **The backend is stateless** (no DB). Anything that requires server-side state is a real
+  architectural step.
+- **BYOK LLM latency.** A party can't wait several seconds for every suggestion.
+
+## Ideas & Directions
+
+### Moves, not songs
+
+Each suggestion is a decision about where the set goes next. Songs fill it in.
+
+| Move | Meaning |
+|---|---|
+| Hold | Stay on the current vibe (energy, tempo feel, era) |
+| Lift / Drop | Raise or lower the energy |
+| Pivot | Keep one thread (mood, groove, decade) and change the genre |
+| Curveball | Unexpected, but still fits |
+| Bridge | One or two songs that get from here to a named destination ("end up in 90s R&B") |
+
+In hosting mode, Bridge grows into **arc planning** ("build to peak energy over the next 30 min").
+
+### Control dial
+
+1. **Whisper.** Suggests only when asked.
+2. **Co-pilot.** Always shows 3–5 picks, and the host approves each one.
+3. **Autofill.** Fills gaps when the queue runs low, and the host can veto.
+4. **Driver.** Builds toward a goal the host sets, and the host steers.
+
+An optional second setting is **adventurousness** (how far suggestions stray), kept separate from
+how often the AI acts.
+
+### App-owned queue (recommended)
+
+Boomin Beats holds the real, editable queue: reorder, remove, insert, AI slot-ins. Spotify only ever
+gets a **buffer of the next 2–3 tracks**, topped up as songs finish.
+
+- **Backgrounding:** the buffer keeps music playing while the app is suspended, and the app
+  reconciles on return. The tradeoff is that tracks already sent to Spotify can't be edited, so a
+  deeper buffer is more resilient but gives less control.
+- **Party mode:** keeps the screen awake while hosting, which avoids the backgrounding problem in
+  the main use case.
+- **Rejected for now: a backend worker** that advances the queue. It would work while backgrounded,
+  but it needs server-side refresh tokens, which ends the stateless design.
+
+### Guest requests by comparing queues
+
+Guests add songs through the provider app (Spotify Jam, or "Add to queue" on the host's device). The
+app knows exactly which tracks it sent to Spotify, so any track in `GET /me/player/queue` that it
+didn't send is treated as a guest request. Those go into a **Requests inbox** where the host can
+approve (place into the app-owned queue), reposition or dismiss them. This requires no guest
+accounts and no backend state.
+
+Fallback if the comparison isn't reliable: a link or QR code to a small web request page. That
+reopens the backend-state question.
+
+### Reading the room
+
+Skips and quick "too much / more of this" taps are cheap feedback that steers the next suggestions.
+They work for both hosting and solo listening.
+
+### Party safety
+
+A clean-lyrics toggle and a do-not-play list (the `do_not_play` field anticipated in the
+`ROADMAP.md` schema).
+
+### Transitions: vibe-level only
+
+Without audio features, BPM and key are LLM estimates. Transition advice stays at the level of "this
+lands well after that". It doesn't promise beatmatching or harmonic mixing.
+
+## Recommendations
+
+1. An app-owned queue with a 2–3 track buffer, plus party mode
+2. Suggestion engine: LLM + Last.fm tags, validated against Spotify search, extending
+   `song_profile.py` rather than starting a new system
+3. Build the core loop first (now playing → suggest a move → queue), then the control dial, then the
+   Requests inbox
+4. Generate suggestions ahead of time, while the current song is playing, so they are ready before
+   the host asks
+
+## Suggested Decisions
+
+- **Confirmed:** a feature of Boomin Beats, not a separate app; iOS first; playback through the
+  user's provider with in-app control; hosting is the primary use; guest requests are in scope at
+  low priority and arrive through the provider app
+- **Recommended, pending confirmation:**
+  - App-owned queue with a 2–3 track buffer
+  - Adventurousness as its own setting, separate from the control dial
+  - Guest requests sequenced after the core loop
+
+## Open Questions
+
+- **Test:** do Spotify Jam additions show up in `GET /me/player/queue`? Can tracks queued by a user
+  be told apart from tracks coming from autoplay or the current playlist? Guest requests depend on
+  both answers.
+- Playback path on iOS: Web API through the backend (inherits spotipy's migration handling, per the
+  2026-08-03 audit) vs. App Remote (lower latency, and supports subscribing to player state)
+- Suggestion latency and cost with BYOK: how far ahead to generate suggestions, and what to cache
+- Where the do-not-play list and session feedback live while there's no database (Keychain or
+  on-device storage are likely fine for a single host)
+- How the queue recovers when the host plays something directly in Spotify, outside the app
+
+## Next Steps (what /plan needs)
+
+1. Run the Jam / `GET /me/player/queue` test first. Its result decides the guest-request design.
+2. Pick the iOS playback path and define the polling/subscription loop for now-playing state
+3. Specify the move → prompt contract: inputs (recent tracks, Last.fm tags, adventurousness) and
+   output schema, reusing `llm_json.py` parsing
+4. Define app-owned queue reconciliation: buffer top-up timing, foreground reconcile, and recovery
+   from outside edits
+5. Acceptance for the first milestone: now-playing view with play/pause/skip, three move-labelled
+   suggestions per track, and tap-to-queue landing in the buffer
+
+---
+
+# DJ Companion — Web Design Brief (2026-10-25)
+
+`/design shape` output. This is the contract `/design craft` builds against. It brings the iOS DJ
+(DJ1–DJ6) to the SvelteKit web app, at full parity, as a **customizable widget grid** modelled on
+Robinhood Legend's layout engine.
+
+## Decisions (confirmed with the owner)
+
+- **Placement:** a new **DJ** nav page, plus a fixed **mini player** bar on every other page.
+- **Layout:** a widget grid the user can rearrange, inspired by Robinhood Legend (resize,
+  reposition, presets, linking). The **Host** preset (the three-column Option 1) is the default.
+- **Primary use:** hosting from a laptop by the speakers. Optimise for glanceability and fast,
+  confident taps; detail on demand.
+- **Scope:** full parity with iOS.
+- **Moves come in both forms:** a combined **Next moves** widget *and* single-move widgets (Toward,
+  Hold, Lift, Drop, Pivot, Curveball, Drift).
+- **Editing is locked by default.** An **Edit layout** toggle reveals drag handles, resize corners,
+  an Add widget menu, and Done. A laptop at a party gets bumped, so no accidental drags.
+- **The mini player is fixed,** not customizable.
+
+## Register and stance
+
+**Product register.** The bar is earned familiarity: "would a Spotify or Legend power user trust
+this?" The tool disappears into the night. Delight is reserved for one moment (the album-art
+ambience, below), never for chrome.
+
+**AI-slop check.**
+- First-order: "music app → dark + neon". That's the existing brand (logo-derived blue/purple on
+  #121212) and the product-register default, so it's kept on purpose, not by reflex.
+- Second-order traps refused: aurora gradients, glassmorphism, neon glow, gradient text, identical
+  card grids.
+- The distinctiveness comes from the **move vocabulary** and **album-art ambience**, not decoration.
+
+## Information architecture
+
+### Widget catalog
+
+Each widget has a header (title + optional actions), a body, and every state shipped.
+
+| Widget | Content | Min size (cols × rows, 12-col grid) | Notes |
+|---|---|---|---|
+| **Now playing** | Art, title, artists, progress, ⏮ ⏯ ⏭, 👎/👍, device | 3 × 5 | Carries the album-art ambience |
+| **DJ controls** | Mode (Whisper / Co-pilot / Autofill / Driver), Safe↔Bold, Clean only | 3 × 3 | |
+| **Goal** | None / Destination / Build / Wind down / Peak then cool / Drift, length, progress | 3 × 2 | Can be docked inside DJ controls in Host |
+| **Next moves** | All moves stacked; each pick has art, title, artist, reason, ⋯, + | 4 × 6 | Refresh in the header |
+| **Single move** (×7 kinds) | One move's picks, same row anatomy | 2 × 3 | Kind chosen when added |
+| **Up next** | Sent to Spotify + Up Next, reorder, remove, Later, + Add song (search) | 3 × 5 | ✦ marks DJ-added picks |
+| **Requests** | Guest requests with Keep / Later / Decline; a badge count | 3 × 3 | Empty state: "Requests from your Spotify queue show up here." |
+| **Song profile** *(pass 2)* | The existing `SongProfile` component for the selected song | 3 × 5 | Linked (below) |
+| **Recently played** *(pass 2)* | This session's history | 3 × 3 | |
+
+### Presets
+
+The layout picker in the page header offers presets, plus "Your layout" once one is edited.
+
+- **Host** (default; the Option 1 shape): Now playing + DJ controls + Goal on the left (3 cols),
+  Next moves in the middle (6), Requests over Up next on the right (3).
+- **Board** (the Option 3 shape): a Now playing banner across the top (12 × 2, a compact variant),
+  a row of single-move widgets, and Up next + Requests along the bottom.
+- **Focus:** a big Now playing (5) beside Next moves (7). Queue reachable through the mini
+  affordance.
+- **Reset to Host** is always one click away in the layout menu.
+
+### Linking (pass 2)
+
+Legend's "dynamic linking", scoped down: one link group. **Song profile follows the selection:**
+the now-playing track by default; clicking any suggestion or queued row selects it. The selected
+row gets the selection treatment (below). No multi-group colour linking; it's overkill here.
+
+### Mini player (other pages)
+
+A fixed 64px bar along the bottom, above any page content: art 40px · title/artist · progress
+hairline · ⏮ ⏯ ⏭ · current goal label · "Open DJ" link. It hides when nothing is playing or the
+user isn't signed in.
+
+## Grid behaviour
+
+- **gridstack.js** (MIT, no dependencies, drag + resize + `save()` / `load()`), pinned to the latest
+  **13.x** (13.3.0). 14.0.0 is a month-old major; adopt it only after checking its changelog.
+  Wrapped in one Svelte component; widgets are Svelte components mounted into grid items.
+- A 12-column grid with a fixed row height. **Breakpoints:** 12 cols at ≥1280px, 8 at 1024–1279,
+  6 at 800–1023. The app's existing desktop-only floor (min-width 800) stays. Below 1280,
+  gridstack's column-reflow keeps each widget's order.
+- **Edit layout:** widget headers show a drag handle, a bottom-right resize corner, and a remove ×.
+  A dashed snap preview appears while dragging. **Done** saves. **Esc** cancels, back to the last
+  saved layout.
+- **Persistence:** `localStorage` key `djLayout.v1` (layout JSON + preset name). It's per-browser
+  convenience state, so a stateless backend is correct; a corrupt or missing value falls back to
+  Host.
+- **Keyboard:** in edit mode, a focused widget moves with arrow keys and resizes with Shift+arrows.
+  An "Add widget" menu adds to the first free slot. That meets `rules:keyboard-operable` without
+  needing drag.
+
+## Visual system
+
+Built on the existing tokens in `routes/styles.css` (surfaces 0/1/2, `--accent` blue, `--accent-2`
+purple, radius 12/8/20, Inter). No new font family.
+
+- **Colour strategy: restrained.** Neutral surfaces. `--accent` only for action, selection and
+  progress. **One meaning per hue across the page:**
+  - Accent blue: primary actions (⏯, +, refresh), progress, selection.
+  - **Toward/Drift lead move:** `--accent-2` purple. It marks the goal's influence, so it's the only
+    purple in the content area.
+  - Danger red: Decline and the Requests badge. Success is not used.
+- **Album-art ambience (the signature move):** the Now playing widget's background is a
+  low-chroma OKLCH tint taken from the cover's dominant colour. It's sampled from the 64px Spotify
+  thumbnail on a canvas (CORS-safe through `i.scdn.co`) and clamped to L 0.18–0.24, C ≤ 0.04 so text
+  contrast stays ≥ 4.5:1. It crossfades over 400ms on track change, with an instant swap under
+  `prefers-reduced-motion`. That's the one atmospheric element; every other widget stays neutral.
+- **Type:** Inter (existing). Product scale 1.2: 12 / 14 / 16 / 20 / 24. Track title in Now playing
+  is 24/600; widget titles 14/600; reasons 13/400 `--text-muted`. Reasons wrap to 2 lines, never
+  truncate mid-word, with the full text in a tooltip. **No uppercase tracked labels** (the
+  existing nav pills are left alone, out of scope).
+- **Widget chrome:** `--surface-1` body, 12px radius, no shadow. Header 40px with a hairline
+  divider. No nested cards: rows inside widgets are bordered rows, not cards.
+- **Icons:** one SVG set across the page (Tabler-style outline, same as the mockups). Replaces the
+  ⚙ glyph only where the DJ page touches it.
+
+## States (every widget)
+
+Loading: skeleton rows matching the row anatomy (no spinners mid-panel). Empty: an invitation with
+a verb. Error: plain sentence plus a retry. Rate-limited: "Spotify is rate-limiting this app right
+now. Try again later." Needs key: "Add an AI key in Settings to get suggestions." with a button that
+opens the existing LLM settings popover. No device: "Open Spotify on any device to start playback."
+
+## Motion
+
+Product stance: 150–250ms, state only. Exponential ease-out. Specifically: row insert/remove in
+queues (height + opacity, FLIP via Svelte's `animate:flip`); the + button turns into ✓ (150ms);
+the ambience crossfade (400ms, the one exception, because it is the state change); the edit-mode
+reveal (handles fade in 150ms). Nothing animates on page load. Reduced motion gets instant swaps.
+
+## Copy
+
+Sentence case; verb + object buttons ("Add song", "Edit layout", "Reset to Host"). No em dashes in
+UI strings. Move summaries are reused from iOS ("Raise the energy", "Somewhere new").
+
+## Data and logic (implementation notes for craft)
+
+The web app has **none of the iOS queue logic yet.** Port it to `src/lib/dj/`, keeping the iOS
+structure so it can be tested the same way:
+- `queueStore.js`: sent/upcoming, adaptive buffer (1 ahead; there's no "background" on the web, so
+  a `visibilitychange` hidden event tops up to N), skip-on-arrival, `reconciled()`,
+  `detectRequests()` and `arrival()` as pure functions, all persisted to `localStorage`.
+- `nowPlaying.js` (2s poll, track-change detection, recent/liked/disliked/skipped),
+  `suggestions.js` (prefetch, cache key incl. settings + goal, in-flight guard, autopilot), and
+  `djSettings.js`.
+- Port the iOS `QueueLogicTests` cases to **vitest** for the pure functions.
+- The backend needs no changes: `/player/*`, `/dj/suggest/`, `/spotify/queue/`, `/search/` already
+  cover the web.
+
+## Out of scope
+
+Mobile/responsive web below 800px · multiple link groups · syncing layouts across devices · a
+theme or light mode for the web (the web app is dark-only today) · restyling the existing pages'
+nav and gradient headline (noted: the Explore headline uses gradient text, which the frontend rules
+ban; fix it separately).
+
+## Risks and open questions
+
+1. **Two hosts at once.** If the iOS app *and* the web DJ are both open, each runs its own queue
+   store and both send tracks to Spotify, so each will see the other's sends as guest requests.
+   Recommend: only one active "DJ host". The web shows a banner ("The DJ is also running on another
+   device") when it sees non-app tracks it can't explain, and offers "Take over". Needs a decision
+   before craft.
+2. **The grid library's fit with Svelte 4 + SvelteKit 1.** Gridstack is vanilla JS, so mounting
+   Svelte widgets into its DOM nodes must be done in `onMount`. Spike this first.
+3. **Groq/Spotify budgets** are unchanged: prefetch stays one call per track change no matter how
+   many move widgets are on screen. All move widgets read the same `suggestions` store.
+
+## Build passes (suggested for /plan)
+
+1. **Pass 1:** the `src/lib/dj/` logic port with vitest; the grid shell (gridstack spike); the Now
+   playing, DJ controls, Goal, Next moves, Single move, Up next and Requests widgets; the Host,
+   Board and Focus presets; Edit layout; the mini player; the album-art ambience.
+2. **Pass 2:** linking + the Song profile widget, Recently played, keyboard move/resize polish, and
+   the two-host takeover.
+
+---
+
+# DJ Sync Across Devices (2026-10-25)
+
+## Problem
+
+The queue and the DJ options live on each device, so the iPhone and the web DJ can't share a
+night. Worse, if both run at once, each treats the other's sends as guest requests. The owner
+wants the queue and the DJ options synced across devices.
+
+## Decision reversed: the backend is no longer stateless
+
+The no-database design (native iOS brainstorm D1; DJ plan "State: on-device only") is **replaced
+for DJ state.** Everything else (Spotify tokens, LLM keys) stays per-request and stateless.
+
+## Confirmed decisions
+
+- **Storage: Supabase Postgres.** One `dj_state` row per Spotify user. Both the local (Mac) and
+  hosted backends point at the same database, which keeps the two-deployment design: the web can
+  stay on the local backend with Ollama while the phone uses the hosted one, and they still sync.
+- **Driving model: like a Spotify Jam.**
+  - The device that starts the DJ session is the **primary**. It's the only one that sends tracks
+    to Spotify (buffer top-up, skip-on-arrival, Autofill/Driver queuing) and the only one that
+    runs request detection.
+  - Every other device is a **participant** with full editing: queue add/reorder/remove, Keep /
+    Later / Decline on requests, mode, Safe↔Bold, clean only, goal, do-not-play, 👍/👎.
+  - It's always labelled: "Driving from this iPhone" or "Driving from MacBook web".
+  - **No silent failover.** If the primary's heartbeat stops for ~60s, participants see "Your
+    iPhone stopped driving" with **Drive from here**; one tap moves the primary role. A
+    participant can also tap Drive from here at any time.
+- **Synced:** the queue (sent, upcoming, requests, guest skips, kept guests), the DJ options (mode,
+  adventurousness, clean, goal, do-not-play), **session feedback** (liked, disliked, skipped), and
+  **recent history**.
+- **Not synced:** the web DJ layout, Appearance, the background buffer depth, and the LLM key.
+  These are per-device by nature.
+- **Include the hosted backend deploy (P0/D1)** so a physical iPhone syncs away from home Wi-Fi.
+
+## Mechanics (recommended, to be finalised in /plan)
+
+- **Identity:** keyed by Spotify user id. The backend resolves it from the bearer token
+  (`GET /me`, cached per token), so no new accounts and a client can't write another user's row.
+- **Endpoints:** `GET /dj/state` → `{version, state, primary}`, and `PUT /dj/state` with
+  `If-Match: <version>`, which returns **409** with the current document on conflict. The client
+  re-applies its edit and retries. Plus `POST /dj/primary` (claim) and a heartbeat.
+- **Granularity:** whole-document writes. The document is small (a queue of tens of items plus
+  settings).
+- **Change pickup:** each client checks the version on the poll it already runs (~2s), and only
+  fetches the full state when the version changes. Supabase Realtime is a possible later upgrade
+  but not needed.
+- **Offline:** a device keeps a local copy and queues its edits; on reconnect it merges with the
+  409 retry loop. The primary keeps driving from its local copy if Supabase is briefly unreachable.
+- **Security:** the Supabase service key lives server-side only (`.env` / host secrets), never in a
+  client. Row access is enforced in the backend by the resolved user id. RLS is enabled as defence
+  in depth.
+
+## Impact on existing work
+
+- **iOS:** `QueueStore` and `DJSettings` persistence switches from `queue.json`/UserDefaults to the
+  sync layer (with the local copy kept as a cache). Request detection and top-ups gated to the
+  primary. A new primary/participant indicator and Drive from here.
+- **Web DJ (design brief above):** the `src/lib/dj/` port is built on the sync layer from the
+  start. The "two hosts at once" risk in the brief is resolved by this design.
+- **Backend:** the first persistent store. Tests for the version/409 logic and the user-id
+  scoping.
+
+## Open questions for /plan
+
+1. Hosting choice for P0/D1 (Fly, Render, Railway) and cold-start tolerance.
+2. Supabase project: new, or an existing one (the connector is available in this environment).
+3. Heartbeat interval and the offline threshold (proposed 15s heartbeat / 60s offline).
+4. Migration: first launch after the update uploads the device's existing local queue, or starts
+   empty.
+
+---
+
+# Spotify Quota: Look Up at Queue Time, Songs by ISRC (2026-10-25)
+
+## Problem / Opportunity
+Spotify's Development Mode quota is unpublished and counted per developer account (since
+2026-07-23, shared by all of an account's Client IDs). **Search** is the bucket that runs out; the
+player, queue and profile calls survived every lockout.
+
+Every screen that *shows* songs also searches Spotify:
+- DJ pick validation, about 10–14 searches per round even after the 2026-10-25 fixes
+- song search as you type (Add song, Explore)
+- the playlist builder's validation
+
+Extended Quota Mode requires a registered organization with ≥250k monthly active users, so raising
+the quota isn't an option. Showing songs must cost no Spotify quota, and only queueing one may.
+
+## Goals
+- A 4-hour, ~60-song night stays well inside the daily search quota: about 1 Spotify search per
+  queued song.
+- No loss of quality. Picks are still checked to exist with the right artist, and still show art,
+  artist and the explicit flag.
+- Song identity that doesn't depend on a provider (ISRC), so Apple Music can be added for a public
+  launch without migrating saved data.
+
+## Audience
+The owner plus a small circle (Development Mode allows the owner and 4 users). Public use is the
+later goal, through Apple Music (direction F).
+
+## Constraints
+- Queueing on Spotify needs a Spotify track ID, and only Spotify search provides one.
+- Deezer's public API: no key, about 50 requests per 5 seconds **per IP**. Its terms target
+  non-commercial use, which suits personal use; re-check before a public launch.
+- The synced document's schema is strict (`routers/dj_state.py`). Adding fields means a matching
+  server, iOS and web change.
+- A clean edit has its own ISRC, so "Clean only" keeps today's rule (skip explicit picks) instead of
+  swapping versions.
+
+## Evidence
+Deezer found **19 of 20** typical DJ picks with the right artist, plus the explicit flag, with no
+key (2026-10-25). The one miss was probably a "feat." credit defeating a naive artist match. Deezer
+track records include an ISRC; `bpm` is often 0.
+
+## Ideas & Directions
+
+### A. Look up on Spotify only when a song is added (chosen)
+- `/dj/suggest/` checks picks against **Deezer** (existence, artist match, art, explicit, ISRC)
+  instead of Spotify.
+- Tapping + (or autopilot adding a song) does one exact Spotify lookup by ISRC, cached in
+  `track_lookup`. A short spinner on the button is fine (owner, 2026-10-25).
+- The lookup happens **when the song is added to Up next**, not when it's sent to Spotify. Every
+  queue item then always has a Spotify `trackID`, so guest-request detection, skip-on-arrival and
+  sync don't change.
+- Misses (on Deezer, not on Spotify) show "Not on Spotify"; autopilot moves to its next candidate.
+
+### B. Deezer for typing and browsing (chosen)
+Add song, Explore and the playlist builder search **Deezer** as you type. A song is looked up on
+Spotify only when it's chosen: queued, added to a playlist or saved. The playlist builder does a
+batch of exact ISRC lookups at "add to playlist" time.
+
+### C. Songs identified by ISRC (chosen)
+- Picks, the synced queue, the cache and feedback entries gain an `isrc`. The Spotify `trackID`
+  stays as the playable handle.
+- One ISRC can map to several Spotify tracks (album, single, compilation, other regions): take the
+  first one playable in the user's market.
+- Fall back to a title + artist search only when a song has no ISRC.
+- The cache keys on ISRC, so a song is looked up once per 30 days across every device.
+
+### D. Odesli fallback while search is locked out (optional, later)
+Turns a Deezer link into a Spotify link on Odesli's quota. About 10 requests a minute without a key
+(a key is free by email). It would keep queueing working through a lockout.
+
+### E. Candidates from songs the app already knows (optional, later)
+Give the AI the user's top tracks, recently played and cached tracks, which already have Spotify
+IDs. Picks from that list cost no search.
+
+### F. Apple Music for the public launch (direction only)
+- MusicKit gives full queue control (insert, reorder, remove), which would replace the
+  app-owned-queue workaround.
+- It needs an Apple Music subscription per listener, MusicKit JS for the web, and the $99/yr Apple
+  Developer Program.
+- The ISRC identity from C is the bridge between the two providers.
+
+## Recommendations
+Build **A + B + C** as one plan: the same pattern on three surfaces, leaving Spotify search for
+queueing only. D and E are optional follow-ups; F is the public-launch direction.
+
+## Suggested Decisions
+- Deezer is the source for display and existence checks; Spotify is used only to resolve a song
+  being queued. *(confirmed)*
+- Resolve when the song is added to Up next; a spinner on tap is acceptable. *(confirmed)*
+- `isrc` is added alongside the Spotify `trackID`, not instead of it.
+- Clean only keeps the skip-explicit rule.
+- Deezer results are cached too, because of the shared-IP limit on Vercel.
+
+## Open Questions (for /plan)
+1. Does `track_lookup` store both kinds of row (title|artist → Deezer match, ISRC → Spotify track),
+   or should there be a second table?
+2. Rows synced before this change have no `isrc`. Leave them as they are (they already have Spotify
+   IDs), or backfill?
+3. The lookup's market: does `market=from_token` stay right when the hosted backend serves other
+   people in the small circle?
+4. Where autopilot's resolve lives: on the primary device only (as today), which keeps sends single?
+5. Last.fm vs Deezer for art and tags. Keep Last.fm for tags and use Deezer for art?
+6. Not in this scope, but it gates "small circle on iPhone": TestFlight needs the paid Apple
+   Developer Program (the same card question as hosting).
+
+## Next Steps (what /plan needs)
+- Milestones across the backend (Deezer client and cache, `/dj/suggest/`, resolve endpoint), iOS
+  and web (picks, tap to queue, Add song/Explore, playlist builder) and the schema (the `isrc`
+  field).
+- A measurable check: count Spotify searches over a real session.

@@ -3,11 +3,11 @@ id: 9a14e8
 source: feedback:trip-planner:eric-smart-preload
 title: "Smart loading: prefill city pages in the background"
 type: task
-status: backlog
+status: review
 assignee: 
 scoped_dir: .
 created: 2026-10-10T22:41:24Z
-updated: 2026-10-10T22:41:24Z
+updated: 2026-10-26T23:13:50Z
 ---
 
 ## Brief
@@ -19,3 +19,5 @@ Eric's test (Sedona/Grand Canyon/Zion), 2026-10-10. When a trip is first built a
 
 ## Updates
 - 2026-10-10T22:41:24Z · created
+- 2026-10-26T22:57:30Z · status: backlog → doing
+- 2026-10-26T23:13:50Z · status: doing → review (Merged to main and deployed; all suites green)

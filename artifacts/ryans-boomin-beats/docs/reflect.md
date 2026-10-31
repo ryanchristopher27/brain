@@ -137,3 +137,130 @@ Phase context: brainstorm → plan → scaffold (run ~5×), plus heavy build/ite
 
 ## Suggested Next Phase
 `/verify` (or `/run`) — drive the app for real and confirm the account-integration and AI-analysis paths end-to-end, since those are the least-tested and highest-risk areas. This also establishes the screenshot-based visual loop for any follow-up polish.
+
+---
+
+# Reflect — DJ Sync, Web DJ, and Quota-Safe Lookups
+Date: 2026-10-26
+Type: Milestone
+Phase context: /build (SY3, W1–W4, Q0–Q4) · /review (W1–W4) · /brainstorm + /plan (quota) · /iterate (polling, search) · production deploys
+
+## Accomplished
+- SY3: iOS on the shared DJ state (Jam-style primary, Drive from here); two-device check passed live.
+- W1–W4: web DJ engine on the sync client, gridstack widget grid with presets, mini player + ambience, linking/song profile/undo. /review found 9 issues; all fixed.
+- "Your Claude Code" AI provider (local CLI, no key, off on Vercel) and the app icon.
+- Q0–Q4: Deezer is the display source, Spotify is asked only when a song is chosen (by ISRC), songs carry provider-neutral identity, shared `track_lookup` cache in Supabase. Showing songs costs 0 Spotify searches; queuing costs 1; repeats 0.
+- Player polling 429 fix (backoff, shared state cache, 503 + retry_after lockout) and request URLs kept out of logs.
+- Six rounds of search fixes: originals first, mid-word queries, re-upload labels, artist-named uploads, covers on every row, one row per song.
+- Seven production deploys, each checked against live Vercel logs.
+- Tracker housekeeping: 41 verified tasks closed.
+
+## What Worked
+- **A production check after every deploy.** Logs caught what tests couldn't: 1,157 player 429s in 38 minutes, httpx logging user ids and search terms, type-ahead gaps.
+- **Spikes in parallel with the build.** Q0 ran against real APIs while Q1–Q4 were built against its expected answers; the results landed and only small adjustments followed.
+- **Live two-device checks** (browser + simulator) proved sync for real instead of relying on unit tests alone.
+- **Brainstorm → plan for the quota problem.** A blocker with no obvious fix ("needs 250k MAU") became a design (A + B + C) in one cycle.
+
+## What Didn't Work
+- **The Spotify limits were discovered by hitting them.** W1–W4 and the DJ prefetch assumed search was cheap; the quota locked search twice and forced the Q0–Q4 redesign.
+- **Search ranking is whack-a-mole.** Each round was triggered by one bad query the user noticed (Money Trees, "september", kendrick lamar money, Tadow). No regression set of real queries exists, so a later fix can quietly break an earlier one.
+- **A debug self-test destroyed real state.** The keychain self-test deleted the device key on every debug launch.
+- **The tracker review column grew to ~40 tasks**, because /build moves work to review and nothing closed it.
+
+## Decisions Reviewed
+| Decision | Outcome | Confidence |
+|---|---|---|
+| Deezer as display source | Works; terms are non-commercial/private, fine for personal + small circle, not public | Medium (fine for now) |
+| Spotify only at choose time, by ISRC | 0 searches to show, 1 per queued song | High |
+| App-client `isrc:` search with fixed market | Avoids the `user-read-private` 403 | High |
+| Player polling at 5s (sync ~5s instead of ~3s) | Stopped the 429s | Medium (fine for now) |
+| Last.fm ranking + Deezer enrichment for type-ahead | Originals first; heuristics still growing | Medium |
+| Claude Code provider local-only | No key handling; never reaches the iPhone | High |
+
+## Lessons Learned
+- **Check an external API's quotas and Development Mode limits before designing a feature that multiplies calls to it.** Recurring: the June reflection already asked for a Spotify gotchas note.
+- **A ranking heuristic needs a golden-query regression test** once it has more than two rules.
+- **A diagnostic writes only to its own slot**, never to real user state.
+- **Check production logs within the hour** (Vercel Hobby keeps 1 hour).
+
+## Surprises
+- Spotify Development Mode strips `external_ids` and `popularity` from tracks.
+- `market=from_token` returns 403 without `user-read-private`.
+- `isrc:` search lists compilations first, and sped-up re-uploads can share the original's ISRC.
+- Player endpoints are rate-limited too, not just search.
+- Extended Quota needs an organization with 250k MAU.
+- Deezer's strict `artist:"" track:""` syntax returns nothing; its ranking can hide originals.
+
+## Memory Updates
+- Written: reference memory "Spotify API gotchas" (closes the June suggestion).
+- Updated: project memory for Boomin Beats (quota-safe lookups shipped; Deezer terms limit public use).
+
+## Next Steps
+1. After a day of real use, check `/stats` and the logs; close e2df2d.
+2. Add a golden-query regression test for type-ahead search (the six reported queries plus a few controls).
+3. Rebuild the iPhone from dev and run the SY2 cellular check.
+4. Live-check DJ6 goals (destination, arc, drift).
+5. Small leftovers: LLM headers only on LLM routes, DELETE /dj/state, DJ/SY1 tidy-ups.
+
+## Suggested Next Phase
+`/iterate` for the golden-query test and the small leftovers, while real use accumulates for the quota check. Before a public launch, `/brainstorm` the Apple Music path, since Deezer's terms and Spotify's quota both block it.
+
+---
+
+# Reflect — Web Redesign, Hosting, F1 + F3, and the Claude Code Relay
+Date: 2026-10-28
+Type: Milestone
+Phase context: /design export → /plan (redesign) → /loop /build R0–R6 → hosting → /build F1, F3a–F3h → relay → production deploys
+
+## Accomplished
+- Design handoff exported (context doc, screenshots, logo) and the Claude Design redesign built as Part 1 (R0–R6): tokens + Geist, shell, shared SongRow, Explore, Builder, Profile, DJ, audit + polish.
+- Web app hosted on Vercel (adapter-vercel, Node 22); the backend guard accepts a Spotify bearer token checked against `ALLOWED_SPOTIFY_USERS`.
+- F1: Settings (General + AI) and first-run onboarding.
+- F3a–F3h: night presets, Up next editing with undo, per-move refresh with feedback, Familiar ↔ New seeded from top tracks, a DJ without an AI key (Last.fm), Save tonight's set, the Compass layout with arrow keys, the Playlist widget and the Builder's "Start a DJ set".
+- "Your Claude Code" on the hosted site: the backend answers 428 with the prompt and the page relays it to trip-fairy-helper (0.1.5 published with Boomin Beats allowed).
+- Four production deploys; the Playlist widget and Up next were checked live against the real account.
+
+## What Worked
+- **A mocked-backend headless harness** (Playwright CLI session + route mocks) let every F3 milestone be checked visually and by state without touching Spotify, so nothing was queued or written by accident.
+- **Small milestone slices (F3a–F3h)** with a commit and tracker move each kept a long run reviewable and easy to deploy in one push.
+- **One seam for the relay.** All AI went through `LLMClient.generate`, so the relay is one provider plus a 428 handler; the four routes barely changed. Sending `llm_error` back instead of failing on the page let every route degrade the way it already does.
+- **The live check right after deploy** proved the newer Spotify `/items` route and paging before the user relied on them.
+
+## What Didn't Work
+- **The relay's last hop took three rounds to diagnose.** Tests and a local end-to-end run passed, but on the hosted site (1) an old `npm run ai` server from Oct 4 still held port 8787 with the old allowed sites, and (2) Chrome's per-site Local network access permission was off. The localhost version always worked, so it hid both.
+- **Mocks hid a missing-header bug.** Save tonight's set's recap never sent the AI headers (F3f). The harness answered the recap without checking headers, so it looked fine until the relay work exposed it.
+- **Multi-line Python string patches broke one edit** (`startSet` lost the `read()` header); the Edit tool would have failed loudly instead.
+- **The tracker review column grew again** (~25 tasks), the same friction as the October reflection.
+
+## Decisions Reviewed
+| Decision | Outcome | Confidence |
+|---|---|---|
+| Reskin first, features later (R then F) | Part 1 shipped cleanly; features layered on without rework | High |
+| No CSS zoom anywhere (gridstack drag) | Text size via `--text-scale` works everywhere | High |
+| Relay through the page (428 + replies replayed) over porting prompts to JS | One seam, routes unchanged; costs a repeat request per AI call | High |
+| Reuse trip-fairy-helper rather than a Boomin Beats package | One process, one port, one code; neutral name later (#8deebf) | High |
+| Play next instead of Play now | Avoids skipping songs already sent to Spotify | High |
+| iOS ignores `familiar` for now | iPhone edits reset it to Mix | Medium (needs the iOS field) |
+
+## Lessons Learned
+- **When a browser says "can't reach" a local helper, check what holds the port first** (`lsof -iTCP:<port>`), then the browser's local-network permission. A success on localhost doesn't prove the hosted path.
+- **Mocks should assert the headers a route needs**, not just answer it.
+- **A long-running dev server keeps the config it started with**; after changing shared code, restart every process that imports it.
+- Recurring: **close the review column at each reflect**, not only when it's huge.
+
+## Surprises
+- Vercel Hobby runtime logs show only app output, so a successful relayed request leaves no trace; the user's report was the only proof.
+- npm answers an unauthenticated publish with a 404, not a 401.
+- The Trip Fairy local server shares the helper core, so it picked up the new allowed site once restarted.
+
+## Memory Updates
+- Updated: Boomin Beats project memory (the relay, and the port 8787 / Chrome local-network debug order).
+
+## Next Steps
+1. Live-check Save tonight's set during a real session (a few songs played, then save; includes the recap).
+2. Teach the iOS app the `familiar` option so iPhone edits keep it.
+3. F2 Previews, F4 Command palette, F5 Phone layout (started in parallel).
+4. Carried: SY2 cellular check, DJ6 goals live check, quota check (e2df2d).
+
+## Suggested Next Phase
+`/build` for F2, F4 and F5 (running in parallel), then `/review` of the three before they deploy together.

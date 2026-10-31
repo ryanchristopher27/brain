@@ -3,7 +3,7 @@
 _Brain's copies of `Trip Fairy`'s markdown artifacts. Source: `/Users/rchristopher/Desktop/Code/trip-planner`._
 
 - **Workflow docs:** 4  (`docs/`)
-- **Task records:** 263  (`tasks/`)
+- **Task records:** 278  (`tasks/`)
 - **Session summaries:** 0 entries  (`sessions.md`)
 - **Marked deliverables:** 0  (`deliverables/`)
 

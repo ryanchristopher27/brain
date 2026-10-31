@@ -3,11 +3,11 @@ id: ce21bc
 source: adhoc:trip-planner:map-styles-setting
 title: Map types + a setting to choose one
 type: feature
-status: backlog
+status: review
 assignee: 
 scoped_dir: .
 created: 2026-09-29T04:37:51Z
-updated: 2026-09-29T04:37:51Z
+updated: 2026-10-26T08:36:06Z
 ---
 
 ## Brief
@@ -19,3 +19,5 @@ Offer different basemaps — the current minimal style, one that shows roads, po
 
 ## Updates
 - 2026-09-29T04:37:51Z · created
+- 2026-10-26T03:16:09Z · status: backlog → doing
+- 2026-10-26T08:36:06Z · status: doing → review (Merged to main and deployed; all suites green)

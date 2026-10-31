@@ -3,11 +3,11 @@ id: 15026e
 source: feedback:trip-planner:eric-events-api
 title: Sports and event schedules as an AI tool
 type: task
-status: backlog
+status: review
 assignee: 
 scoped_dir: .
 created: 2026-10-10T22:41:25Z
-updated: 2026-10-10T22:41:25Z
+updated: 2026-10-26T23:48:59Z
 ---
 
 ## Brief
@@ -19,3 +19,5 @@ Eric's test (Sedona/Grand Canyon/Zion), 2026-10-10. Give the models a tool that 
 
 ## Updates
 - 2026-10-10T22:41:25Z · created
+- 2026-10-26T23:14:29Z · status: backlog → doing
+- 2026-10-26T23:48:59Z · status: doing → review (Merged and deployed; hidden until TICKETMASTER_API_KEY is set in Vercel)

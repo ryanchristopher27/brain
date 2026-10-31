@@ -3,11 +3,11 @@ id: a0829f
 source: adhoc:trip-planner:mcp-grok
 title: "MCP: connect Trip Fairy from Grok"
 type: feature
-status: backlog
+status: review
 assignee: 
 scoped_dir: .
 created: 2026-10-09T02:00:11Z
-updated: 2026-10-09T02:00:11Z
+updated: 2026-10-26T23:13:50Z
 ---
 
 ## Brief
@@ -19,3 +19,5 @@ Let Grok users connect to Trip Fairy's MCP server (https://mytripfairy.com/api/m
 
 ## Updates
 - 2026-10-09T02:00:11Z · created
+- 2026-10-26T22:57:30Z · status: backlog → doing
+- 2026-10-26T23:13:50Z · status: doing → review (Merged to main and deployed; all suites green)

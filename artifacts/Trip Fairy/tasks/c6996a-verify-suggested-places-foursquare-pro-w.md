@@ -3,11 +3,11 @@ id: c6996a
 source: plan:trip-planner:DATA-R1
 title: Verify suggested places (Foursquare Pro + Wikivoyage)
 type: task
-status: backlog
+status: review
 assignee: 
 scoped_dir: .
 created: 2026-10-02T03:58:03Z
-updated: 2026-10-02T03:58:03Z
+updated: 2026-10-26T23:48:59Z
 ---
 
 ## Brief
@@ -19,3 +19,5 @@ Run AI-suggested places through Foursquare Place Match/search; keep real ones wi
 
 ## Updates
 - 2026-10-02T03:58:03Z · created
+- 2026-10-26T23:14:29Z · status: backlog → doing
+- 2026-10-26T23:48:59Z · status: doing → review (Free half (OSM + Wikipedia existence check) merged and deployed; Foursquare half still parked)

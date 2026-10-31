@@ -1137,3 +1137,31 @@ Places, prices and blurbs come from the LLM (derive.js city briefings) with coor
 - Disclosure: affiliate links need a short "we may earn a commission" note.
 
 Sources: Google pricing (woosmap.com/blog/google-places-api-pricing), Google terms (developers.google.com/maps/documentation/places/web-service/policies, cloud.google.com/maps-platform/terms/maps-service-terms), Foursquare pricing (docs.foursquare.com/developer/reference/upcoming-changes, foursquare.com/pricing), FSQ OS Places (foursquare.com/resources/blog/data/evolving-fsq-open-source-places), Overture (docs.overturemaps.org/guides/places), Tripadvisor (tripadvisor.com/business/solutions/hotels/content-api, vorplabs.com/agent-tools/tripadvisor-content-api), Yelp (business.yelp.com/data/resources/pricing), Overpass (wiki.openstreetmap.org/wiki/Overpass_API), Viator (partnerresources.viator.com/travel-commerce/affiliate), GetYourGuide (partner.getyourguide.support/hc/en-us/articles/13981133907613), Booking (developers.booking.com/demand/docs/getting-started/prerequisites), Expedia (developers.expediagroup.com/rapid/setup), Stay22 (stay22.com/docs), Travelpayouts (travelpayouts.com/blog/train-affiliate-programs), Rome2Rio (apis.io/providers/rome2rio).
+
+## 2026-10-26 · Event schedules for the trip assistant (#15026e)
+
+**Ask (Eric):** "what's on while I'm in Sedona/Zion?" and "plan around a game". Real listings for a place + date range, shown on the city page and available to the assistant. No invented events.
+
+### APIs considered
+Assessed from each provider's published docs/terms as known when written; re-read the terms at signup (they change).
+
+| API | Coverage | Cost / free tier | Terms that matter | Verdict |
+|---|---|---|---|---|
+| **Ticketmaster Discovery v2** | Sports, music, arts/theatre, family; US/CA/MX/EU/AU/NZ and more; search by lat/long+radius, city, keyword, classification, date range; returns ticket URL, venue, price ranges, images | **Free key, self-serve**, 5000 calls/day, 5 req/s | Display must link to the Ticketmaster event page (we send people to buy there); show their name/attribution; no resale of the data; keep any caching short and tied to display. Not exclusive: other sources' events can sit beside theirs | **Chosen** |
+| SeatGeek Platform | Sports + concerts, good US sports/price data | Free client id, but access is by approval and aimed at affiliate partners; commercial use needs sign-off | Affiliate/partner terms, attribution required | Fallback if Ticketmaster is refused; needs approval |
+| PredictHQ | Broadest (incl. free/local festivals, holidays, attendance forecasts) | Free tier is a trial/limited; paid plans are business-priced | Commercial licence; built for demand forecasting, overkill here | Not now; revisit if free/local festivals matter |
+| API-Sports | Fixtures/scores for a given sport/league (football, basketball, ...), not general events | Free tier ~100 calls/day per sport API; one subscription per sport | Per-sport accounts; no concerts/festivals | No: wrong shape for "what's on in a place" |
+
+### Decision
+Ticketmaster Discovery. Free and instant, one call answers place + dates + category, includes a ticket link (so no affiliate setup), and covers the places Eric named. Gap: ticketed events only (small-town and free festivals are thin) - the UI and the assistant both say so.
+
+### How it works
+- `GET /events` -> `api/data.js ?op=events` (no new function; stays at 8 of 12) -> `server/events.mjs`. Env `TICKETMASTER_API_KEY`; unset -> `{configured:false}` and the app hides every events surface.
+- Inputs validated/clamped on the server: ISO dates, range capped at 31 days, lat/lng range-checked and rounded to 2 decimals, radius 5-100 mi, keyword stripped to 60 safe chars, category allow-list.
+- Cache: per-instance memory, 6 h TTL, plus CDN `s-maxage` 6 h. No migration. Ceiling: each instance warms its own cache; upgrade path is a shared table like `geo_cache`. Rate limit: 60 lookups / 10 min per salted IP hash, in memory (same ceiling).
+- Normalized to `{name, category, start, date, time, venue, city, url, priceRange?, image?}`; query widened a day each side for time zones then filtered on the venue-local date.
+- Assistant: no tool support server-side (`/ai/plan` takes one prompt string), so `editPlan` fetches `/events` for each dated stop only when the latest message mentions events/games/concerts/festivals/"what's on", and appends an "EVENTS during the trip" block (max 8 per stop, 6 stops) with rules to cite only that list and link it. Same pattern as fares/weather context; works on every engine. Chat now renders http(s) links.
+- UI: "Events during your stay" card on the city Overview, category filter, Tickets link, Ticketmaster attribution.
+
+### Owner to do
+Create a Ticketmaster developer account (developer.ticketmaster.com), copy the Consumer Key, set `TICKETMASTER_API_KEY` in Vercel (and server/.env for local), accept their API Terms of Use. Privacy policy lists Ticketmaster as a sub-processor (place + dates only).
