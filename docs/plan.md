@@ -1644,3 +1644,20 @@ Findings that change the build:
   inputs, expert generated, all-or-nothing incl. destructive test command, name clash + remove).
   Live: debate team ran two rounds and recommended, citing the store code — 50 s, ~$0.34. Browser:
   start form (pipeline first, inputs per template), team grouping, Remove team.
+
+## Agent Harness — follow-up (2026-10-31): `team` mod (the harness inside Claude Code)
+- `mods/team/`, installed from brain's marketplace at user scope (`install.sh` picks it up on any machine).
+  Talks to the dashboard over `$.http.fetch` (token from `/api/config`), polling every 4 s.
+- **Pane** (`/team`): team summary, waiting actions with Allow / Always / Deny, a lane per agent, Stop
+  everything, link to the Hub. **Band above the prompt** while anything waits (Allow / Deny), and a
+  toast when a new action starts waiting.
+- **`/team send <agent> <message>`, `/team stop`, `/team hub`.**
+- **Tools for the main session:** `mcp__team__agents`, `mcp__team__send`, `mcp__team__read`. A message
+  sent from a session gets its reply delivered back into that session as a new turn by the poller, so
+  the model never waits or polls.
+- Caught while building: a variable named `h` shadowed the JSX factory and would have crashed the band
+  and approval rows (tests); a tool's arguments sit on the event, not under `input` (live run — the
+  test had made the same assumption); the desktop app only links `https:`/`http://localhost`.
+- Checks: validates, type-checks, 4 tests (pane + approve on terminal/desktop, reply delivered once,
+  band, dashboard down). Live headless: `/team` and `agents` read the real dashboard; `send` reached a
+  temporary agent, which replied.

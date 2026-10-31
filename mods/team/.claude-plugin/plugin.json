@@ -1,0 +1,7 @@
+{
+  "name": "team",
+  "version": "0.1.0",
+  "description": "Brings the brain dashboard's agent team into Claude Code: a Team pane, approval banner, /team, and tools to message agents.",
+  "author": { "name": "Ryan Christopher" },
+  "types": "./types/index.d.ts"
+}

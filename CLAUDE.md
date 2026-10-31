@@ -21,7 +21,7 @@ Brain is a modular LLM resource suite — a vault of workflow skills, rules, hoo
 | `universal/rules.md` | Always-on behavior rules — imported into every Claude Code session via `~/.claude/CLAUDE.md` (managed block) and mirrored for Cursor in `.cursor/rules/universal.mdc` |
 | `universal/hooks/` | Hook infrastructure — examples and active scripts |
 | `domains/` | Domain-specific rules (ml, frontend, research, systems) |
-| `mods/` | Claude Code mods (function-hook plugins), e.g. `model-router`. Listed in `.claude-plugin/marketplace.json`; install.sh installs each at user scope |
+| `mods/` | Claude Code mods (function-hook plugins): `model-router`, `team` (agent harness in Claude Code). Listed in `.claude-plugin/marketplace.json`; install.sh installs each at user scope |
 | `install/install.sh` | Wires brain globally into Claude Code and Cursor |
 | `BRAINSTORM.md` | Living design doc — decisions, structure, open questions |
 
