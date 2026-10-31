@@ -1,0 +1,32 @@
+{
+  "name": "project-team",
+  "order": 2,
+  "label": "Standing project team",
+  "description": "A project expert plus planner, builder and reviewer that stay with one project and pull work from its tracker.",
+  "inputs": [
+    "scope",
+    "test_command"
+  ],
+  "kickoff": "",
+  "members": [
+    {
+      "as": "planner",
+      "from": "workflow/planner",
+      "lead": true,
+      "extra": "This is a standing team. When the user says 'next', use list_tasks to pick the oldest task in ready (else backlog) and run it. Ask expert when you need context about the project."
+    },
+    {
+      "as": "expert",
+      "from": "expert"
+    },
+    {
+      "as": "builder",
+      "from": "workflow/builder",
+      "scope": "ask"
+    },
+    {
+      "as": "reviewer",
+      "from": "workflow/reviewer"
+    }
+  ]
+}

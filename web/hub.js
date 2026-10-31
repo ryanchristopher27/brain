@@ -1172,8 +1172,9 @@ function selectFld(label, options, cur, onChange) {
 
 function mountTeam(root) {
   const T = { agents: [], holds: [], sel: null, drawn: undefined, creating: false, seen: new Set(), personas: [], projects: [],
-    library: [], lib: null };  // lib: selected definition key "kind:project:name", or "+def" for a new one
-  const shown = () => (T.creating ? "+new" : T.lib ? "lib:" + T.lib : T.sel);
+    library: [], lib: null,  // lib: selected definition key "kind:project:name", or "+def" for a new one
+    templates: [], starting: false };
+  const shown = () => (T.starting ? "+team" : T.creating ? "+new" : T.lib ? "lib:" + T.lib : T.sel);
   const defKey = (d) => `${d.kind}:${d.project || ""}:${d.name}`;
   try { T.sel = localStorage.getItem("teamsel"); } catch {}
   root.className = "appv team";
@@ -1199,7 +1200,8 @@ function mountTeam(root) {
       pill("pulse", String(working), "working"), pill("chart", money(today), "used today"));
     if (T.holds.length) pills.append(pill("alert", String(T.holds.length), "waiting on you", "warn"));
     bar.append(pills, el("span", "grow"),
-      btn("New agent", { kind: "primary", icon: "users", onClick: () => { T.creating = true; T.lib = null; drawDetail(); drawRoster(); } }),
+      btn("Start a team", { kind: "primary", icon: "users", onClick: () => { T.starting = true; T.creating = false; T.lib = null; drawDetail(); drawRoster(); } }),
+      btn("New agent", { icon: "users", onClick: () => { T.creating = true; T.starting = false; T.lib = null; drawDetail(); drawRoster(); } }),
       btn("Stop everything", { kind: "danger", icon: "ban", disabled: !T.agents.length,
         title: "Deny everything waiting, pause every agent, stop running turns",
         onClick: async () => {
@@ -1235,8 +1237,22 @@ function mountTeam(root) {
     list.innerHTML = "";
     const g = el("div");
     g.append(el("h3", "lgroup-h", "Agents"));
-    if (!T.agents.length) g.append(el("p", "lnote", "No agents yet. Create one to start a team."));
-    T.agents.forEach((a) => {
+    if (!T.agents.length) g.append(el("p", "lnote", "No agents yet. Start a team or create one."));
+    let lastTeam;
+    [...T.agents].sort((x, y) => (x.team || "").localeCompare(y.team || "")).forEach((a) => {
+      if (a.team !== lastTeam) {
+        lastTeam = a.team;
+        if (a.team) {
+          const [prefix, tpl] = a.team.split(":");
+          const h = el("div", "lsub tm-team-h");
+          h.append(el("span", null, `${(T.templates.find((t) => t.name === tpl) || {}).label || tpl} · ${prefix}`),
+            btn("Remove team", { kind: "ghost", icon: "trash", iconOnly: true, onClick: async () => {
+              if (!winOf(root).confirm(`Remove every agent on the ${prefix} ${tpl} team, with their conversations?`)) return;
+              await call(`/api/harness/teams/${enc(a.team)}`, "DELETE"); refresh();
+            } }));
+          g.append(h);
+        } else g.append(el("div", "lsub", "On their own"));
+      }
       const on = shown() === a.name;
       const r = el("div", "lrow tm-lane" + (on ? " on" : ""));
       const main = el("button", "lrow-main");
@@ -1291,12 +1307,12 @@ function mountTeam(root) {
   }
 
   function openDef(key) {
-    T.lib = key; T.creating = false;
+    T.lib = key; T.creating = false; T.starting = false;
     drawRoster(); drawDetail();
   }
 
   function selectAgent(name) {
-    T.sel = name; T.creating = false; T.lib = null;
+    T.sel = name; T.creating = false; T.lib = null; T.starting = false;
     try { localStorage.setItem("teamsel", name); } catch {}
     drawRoster(); drawDetail();
   }
@@ -1508,6 +1524,66 @@ function mountTeam(root) {
     return f;
   }
 
+  function buildStart() {
+    const v = { template: (T.templates[0] || {}).name, project: (T.projects[0] || {}).name || "", prefix: "", inputs: {} };
+    const f = el("form", "dt-form tm-create");
+    f.noValidate = true;
+    const top = el("div", "dt-top");
+    const title = el("div", "dt-title"); title.append(icon("users", 18), el("h2", null, "Start a team"));
+    top.append(title);
+    const cards = el("div", "tm-tpls");
+    const inputsBox = el("div", "fgrid");
+    const LABELS = {
+      scope: { label: "Builder writes inside", help: "folders, relative to the project", def: "." },
+      test_command: { label: "Test command", help: "e.g. npm test — pre-approved for builder and reviewer" },
+      task: { label: "Tracker task", help: "id, e.g. a1b2c3 — the planner starts on it" },
+      question: { label: "Question", help: "what to debate or research" },
+    };
+    const drawInputs = () => {
+      inputsBox.innerHTML = "";
+      const t = T.templates.find((x) => x.name === v.template) || { inputs: [] };
+      t.inputs.forEach((k) => {
+        const L = LABELS[k] || { label: k };
+        if (v.inputs[k] == null && L.def) v.inputs[k] = L.def;
+        if (k === "question") {
+          const lab = el("label", "fld tm-wide");
+          const ta = el("textarea"); ta.rows = 3; ta.maxLength = 2000; ta.placeholder = L.help; ta.value = v.inputs[k] || "";
+          ta.oninput = () => (v.inputs[k] = ta.value);
+          lab.append(el("span", "fld-l", L.label), ta);
+          inputsBox.append(lab);
+        } else inputsBox.append(field({ name: k, label: L.label, help: L.help, required: false, maxlen: 300 }, v.inputs[k] || "", (x) => (v.inputs[k] = x)));
+      });
+    };
+    T.templates.forEach((t) => {
+      const c = el("label", "tm-tpl");
+      const r = el("input"); r.type = "radio"; r.name = "tpl"; r.value = t.name; r.checked = t.name === v.template;
+      r.onchange = () => { v.template = t.name; drawInputs(); };
+      const tx = el("span", "tm-tpl-t");
+      tx.append(el("b", null, t.label), el("span", null, t.description),
+        el("span", "tm-tpl-m", t.members.map((m) => m.as + (m.lead ? " (lead)" : "")).join(" · ")));
+      c.append(r, tx);
+      cards.append(c);
+    });
+    const grid = el("div", "fgrid");
+    grid.append(selectFld("Project", T.projects.map((p) => [p.name, p.name]), v.project, (x) => (v.project = x)),
+      field({ name: "prefix", label: "Name prefix", help: "defaults to the project name", maxlen: 19, required: false }, "", (x) => (v.prefix = x.trim())));
+    const go = btn("Start team", { kind: "primary", icon: "play" });
+    go.type = "submit";
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      go.disabled = true;
+      const r = await call(`/api/harness/teams/${enc(v.template)}/start`, "POST", { project: v.project, prefix: v.prefix, inputs: v.inputs });
+      go.disabled = false;
+      if (r) { T.starting = false; await refresh(); selectAgent(r.lead); }
+    };
+    const acts = el("div", "dt-acts");
+    acts.append(go, btn("Cancel", { kind: "ghost", onClick: () => { T.starting = false; drawRoster(); drawDetail(); } }));
+    drawInputs();
+    f.append(top, cards, grid, inputsBox,
+      el("p", "fld-h", "Every member is created at once (or none are). Writers stay in their folder; anything else waits for you here."), acts);
+    return f;
+  }
+
   function buildAdd(d) {
     const box = el("div", "tm-add");
     box.append(el("h3", "lgroup-h", "Add to the team"));
@@ -1529,6 +1605,7 @@ function mountTeam(root) {
   async function drawDetail() {
     detail.innerHTML = ""; head = log = settings = null; T.seen = new Set();
     T.drawn = shown();
+    if (T.starting) { detail.append(buildStart()); return; }
     if (T.creating) { detail.append(buildCreate()); detail.querySelector("input")?.focus(); return; }
     if (T.lib) { detail.append(buildDefinition(T.library.find((d) => defKey(d) === T.lib))); return; }
     const a = agent();
@@ -1554,7 +1631,7 @@ function mountTeam(root) {
     if (T.lib && T.lib !== "+def" && !lib.some((d) => defKey(d) === T.lib)) T.lib = null;
     if (!agent() && !T.creating) T.sel = (agents[0] || {}).name || null;
     drawBar(); drawHolds(); drawRoster();
-    if (T.drawn !== shown()) drawDetail(); else if (!T.lib && !T.creating) drawHead();
+    if (T.drawn !== shown()) drawDetail(); else if (!T.lib && !T.creating && !T.starting) drawHead();
   }
 
   const onEvent = (e) => {
@@ -1569,7 +1646,8 @@ function mountTeam(root) {
   };
   window.addEventListener("harness", onEvent);
   (async () => {
-    [T.personas, T.projects] = await Promise.all([api("/api/agents").catch(() => []), api("/api/projects").catch(() => [])]);
+    [T.personas, T.projects, T.templates] = await Promise.all([api("/api/agents").catch(() => []),
+      api("/api/projects").catch(() => []), api("/api/harness/teams").catch(() => [])]);
     await refresh();
   })();
   const poll = setInterval(refresh, 15000);

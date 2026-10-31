@@ -1,0 +1,28 @@
+{
+  "name": "pipeline",
+  "order": 1,
+  "label": "Plan → build → review",
+  "description": "A planner breaks a task down, a builder implements it in one folder, a reviewer checks it. The task ends at review for you to close.",
+  "inputs": [
+    "scope",
+    "test_command",
+    "task"
+  ],
+  "kickoff": "Take task #{task} to review.",
+  "members": [
+    {
+      "as": "planner",
+      "from": "workflow/planner",
+      "lead": true
+    },
+    {
+      "as": "builder",
+      "from": "workflow/builder",
+      "scope": "ask"
+    },
+    {
+      "as": "reviewer",
+      "from": "workflow/reviewer"
+    }
+  ]
+}

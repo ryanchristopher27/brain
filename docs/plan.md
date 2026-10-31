@@ -1619,3 +1619,28 @@ Findings that change the build:
   their project, memory path, definition → live agent). Live: generated a brain expert in the browser,
   added it to the team, and it answered a question about the harness correctly with file citations;
   added `planner` to the team from the library. Test expert + agents removed afterwards.
+
+## Agent Harness — H7 done (2026-10-31): team templates
+- **Templates are JSON files** in `brain/agents/teams/`: `pipeline` (planner → builder → reviewer),
+  `project-team` (expert + planner + builder + reviewer that pulls tracker work on "next"), `research`
+  (Opus lead + three Haiku researchers), `debate` (judge + proponent + skeptic). Members come from the
+  library (`workflow/<name>`, or `expert`, generated if the project has none) or are inline.
+- **Start a team** creates every member as `<prefix>-<role>` tagged with the team, all or nothing (any
+  failure — scope lock, bad input — removes the members already created). Each brief gets a roster line
+  ("'builder' is brain-builder") so roles written with short names reach the real agents. The lead gets
+  the kickoff message only when its inputs were given.
+- **H5 gap closed:** an optional test command is pre-approved ("always") for the builder and reviewer and
+  named in their briefs, so reviewers can run tests without asking. Push/destructive commands are refused
+  as pre-approvals.
+- **New bus tool** `list_tasks(status?)` so a standing team can pick the next task.
+- **Hub:** "Start a team" (template cards, project, prefix, the template's inputs); roster lanes grouped by
+  team with "Remove team".
+- **Found and fixed live — lost messages on restart:** the first debate stalled because a code edit
+  reloaded the dashboard mid-run; inboxes were in memory, so queued and in-flight messages vanished.
+  Messages are now stored as `pending` until their turn finishes (not on cancel), and startup re-delivers
+  anything unfinished with a note telling the agent to check before repeating actions (at-least-once).
+  Paused agents keep their re-delivered messages parked. Test: `test_restart_redelivers_unfinished_turns`.
+- Tests: 22 runtime + 5 library + 6 teams (every template resolves, pipeline wiring, kickoff waits for
+  inputs, expert generated, all-or-nothing incl. destructive test command, name clash + remove).
+  Live: debate team ran two rounds and recommended, citing the store code — 50 s, ~$0.34. Browser:
+  start form (pipeline first, inputs per template), team grouping, Remove team.

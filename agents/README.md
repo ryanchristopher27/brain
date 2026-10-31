@@ -19,14 +19,18 @@ agents/
 ├── background/          # Unattended / scheduled agents
 │   ├── operator.md      # Autonomous · tightest scope + full logging
 │   └── runner.sh        # Headless `claude -p` wrapper for scheduled runs
-└── workflow/            # Team agent definitions (NOT installed as subagents)
-    └── planner.md …     # brainstormer · planner · builder · reviewer · reflector
+├── workflow/            # Team agent definitions (NOT installed as subagents)
+│   └── planner.md …     # brainstormer · planner · builder · reviewer · reflector
+└── teams/               # One-click team templates (JSON): pipeline · project-team · research · debate
 ```
 
 `workflow/` holds definitions for the **agent harness** (Hub → Team): long-lived agents built on
 a persona plus a role. Project experts live beside their project in `<project>/.brain/agents/`.
 Edit both from the Team view's Library; adding one to the team copies its settings into a live
 agent. `install.sh` only links `personas/` and `background/`, so these never become subagents.
+`teams/*.json` are templates for **Start a team**: members come from the library (`"from":
+"workflow/<name>"` or `"expert"`) or are defined inline; inputs (`scope`, `test_command`, `task`,
+`question`) fill the builder's folder, a pre-approved test command, and the lead's first message.
 
 ---
 

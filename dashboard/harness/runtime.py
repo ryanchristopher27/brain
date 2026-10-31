@@ -61,7 +61,8 @@ DESTRUCTIVE_RE = re.compile(r"\brm\s+-\w*[rf]|\bgit\s+(reset\s+--hard|clean\s+-\
 DENY_TOOLS = {"Task", "Agent"}  # agents don't spawn agents in v1
 HOLD_SECS = 900
 SESSION_SETTINGS = json.dumps({"enabledPlugins": {"model-router@brain": False}})
-BUS_TOOLS = ["mcp__bus__send_message", "mcp__bus__list_agents", "mcp__bus__read_task", "mcp__bus__post_update"]
+BUS_TOOLS = ["mcp__bus__send_message", "mcp__bus__list_agents", "mcp__bus__read_task", "mcp__bus__post_update",
+             "mcp__bus__list_tasks"]
 AGENT_STATUSES = ("doing", "review")  # agents move work along; only the user closes it
 
 
@@ -109,6 +110,19 @@ def clean_model(raw: dict, base: dict) -> dict:
     if m["floor"] and m["ceiling"] and TIERS.index(m["floor"]) > TIERS.index(m["ceiling"]):
         raise HarnessError("floor is above ceiling")
     return m
+
+
+def clean_always(cmds: list) -> list[str]:
+    """Commands pre-approved for an agent. Push and destructive commands are always asked, so never listed."""
+    out = []
+    for c in cmds or []:
+        c = str(c).strip()
+        if not c or len(c) > 300 or "\n" in c:
+            raise HarnessError("pre-approved commands must be one line of at most 300 characters")
+        if GIT_PUSH_RE.search(c) or DESTRUCTIVE_RE.search(c):
+            raise HarnessError(f"'{c}' pushes or can destroy work; it always needs approval")
+        out.append(c)
+    return sorted(set(out))
 
 
 def clean_limits(raw: dict, base: dict) -> dict:
@@ -173,8 +187,8 @@ class Session:
         self.client: ClaudeSDKClient | None = None
         self.model: str | None = None      # model the live client is on
         self.cost_seen = 0.0               # cumulative cost reported by the live client
-        self.inbox: asyncio.Queue[tuple[str, str, str, int]] = asyncio.Queue()  # sender, text, thread, hop
-        self.held: tuple[str, str, str, int] | None = None  # a message parked by a usage cap
+        self.inbox: asyncio.Queue[tuple] = asyncio.Queue()  # (sender, text, thread, hop, message id)
+        self.held: tuple | None = None  # a message parked while paused or by a usage cap
         self.thread, self.hop = "", 0      # what the current turn is answering (for outgoing sends)
         self.last_tier = "standard"
         self.unpaused = asyncio.Event()
@@ -204,7 +218,7 @@ class Session:
             if self.idle:
                 self.idle.cancel()
                 self.idle = None
-            sender, text, thread, hop = item
+            sender, text, thread, hop, msg_id = item
             if self.h.remaining(self.name) <= 0:
                 self.held, self.busy = item, False
                 await self.h._log(self.name, "system", "harness", "Daily usage cap reached. Paused; raise the cap "
@@ -215,12 +229,15 @@ class Session:
                 self.busy = False
                 await self.h._log(self.name, "system", "harness", f"Thread turn cap ({THREAD_TURN_CAP}) reached; "
                                   "message not delivered.", thread=thread, hop=hop)
+                store.finish_message(self.h.conn, msg_id)
                 continue
             await self.h._changed(self.name)
             try:
                 self.thread, self.hop = thread, hop
                 await self._turn(sender, text)
+                store.finish_message(self.h.conn, msg_id)  # not on cancel: a stopped server re-delivers it
             except Exception as e:  # a failed turn is logged; the agent stays usable
+                store.finish_message(self.h.conn, msg_id)
                 await self.h._log(self.name, "system", "harness", f"turn failed: {type(e).__name__}: {e}",
                                   thread=thread, hop=hop)
                 await self.close()
@@ -323,7 +340,15 @@ class Session:
                               thread=self.thread, hop=self.hop)
             return text(f"Updated #{tid}" + (f" and moved it to {status}." if status else "."))
 
-        return [send_message, list_agents, read_task, post_update]
+        @tool("list_tasks", "List this project's tracker tasks, optionally only one status "
+              "(backlog, ready, doing, review, done).", {"type": "object", "properties": {"status": {"type": "string"}}})
+        async def list_tasks(args):
+            want = args.get("status")
+            rows = [t for t in tracker.list_tasks(task_root()) if not want or t["status"] == want]
+            rows.sort(key=lambda t: t["created"])
+            return text("\n".join(f"#{t['id']} [{t['status']}] {t['title']}" for t in rows[:50]) or "No tasks.")
+
+        return [send_message, list_agents, read_task, post_update, list_tasks]
 
     async def _turn(self, sender: str, text: str) -> None:
         a = self.h._agent(self.name)
@@ -422,7 +447,7 @@ class Harness:
         a = self._agent(name)
         s = self.sessions.get(name)
         model, tier = resolve_model(a["model"])
-        return {**{k: a[k] for k in ("name", "persona", "project", "brief", "scope", "scope_root", "model", "limits", "always", "paused",
+        return {**{k: a[k] for k in ("name", "persona", "project", "brief", "scope", "scope_root", "model", "limits", "always", "team", "paused",
                                      "usage_usd", "session_id")},
                 "usage_today": round(store.usage_since(self.conn, name, day_start()), 4),
                 "state": s.state(a) if s else ("paused" if a["paused"] else ("asleep" if a["session_id"] else "new")),
@@ -464,7 +489,8 @@ class Harness:
         return out
 
     async def create(self, name: str, persona: str, project: str, brief: str = "",
-                     scope: list[str] | None = None, model: dict | None = None, limits: dict | None = None) -> dict:
+                     scope: list[str] | None = None, model: dict | None = None, limits: dict | None = None,
+                     always: list[str] | None = None, team: str | None = None) -> dict:
         if not NAME_RE.match(name or ""):
             raise HarnessError("name: lowercase letters, digits, dashes (2-32), starting with a letter")
         if store.get_agent(self.conn, name):
@@ -477,7 +503,7 @@ class Harness:
         lim = clean_limits(limits or {}, DEFAULT_LIMITS)
         sc = self._clean_scope(project, scope)
         self._check_lock(name, persona, sc)
-        store.create_agent(self.conn, name, persona, project, brief, sc, m, lim)
+        store.create_agent(self.conn, name, persona, project, brief, sc, m, lim, clean_always(always), team)
         await self._changed(name)
         return self.view(name)
 
@@ -535,8 +561,8 @@ class Harness:
             raise HarnessError(f"message must be 1-{TEXT_MAX} characters")
         s = self._session(name)
         thread = thread or secrets.token_hex(6)
-        rec = await self._log(name, "user", sender, text, thread=thread, hop=hop)
-        s.inbox.put_nowait((sender, text, thread, hop))
+        rec = await self._log(name, "user", sender, text, thread=thread, hop=hop, pending=True)
+        s.inbox.put_nowait((sender, text, thread, hop, rec["id"]))
         await self._changed(name)
         return rec
 
@@ -633,6 +659,18 @@ class Harness:
         self.audit({"harness": "kill"})
         return {"paused": len(store.list_agents(self.conn))}
 
+    async def recover(self) -> int:
+        """Re-queue messages whose turn never finished because the dashboard stopped (restart, crash,
+        reload). At-least-once: an interrupted turn runs again, so the agent is told to check first."""
+        msgs = store.pending_messages(self.conn)
+        for m in msgs:
+            note = ("(Re-delivered after the dashboard restarted mid-turn. You may have already started on this; "
+                    "check what's done before repeating any action.)\n\n")
+            self._session(m["agent"]).inbox.put_nowait((m["sender"], note + m["text"], m["thread"], m["hop"], m["id"]))
+        for name in {m["agent"] for m in msgs}:
+            await self._log(name, "system", "harness", "Dashboard restarted: re-delivering unfinished messages.")
+        return len(msgs)
+
     async def stop_all(self) -> None:
         self._deny_pending()
         for s in list(self.sessions.values()):
@@ -642,8 +680,8 @@ class Harness:
     # events
     async def _log(self, name: str, role: str, sender: str, text: str, model: str | None = None,
                    cost: float | None = None, thread: str | None = None, hop: int = 0,
-                   route: str | None = None) -> dict:
-        rec = store.log_message(self.conn, name, role, sender, text, model, cost, thread, hop, route)
+                   route: str | None = None, pending: bool = False) -> dict:
+        rec = store.log_message(self.conn, name, role, sender, text, model, cost, thread, hop, route, pending)
         await self.broadcast({"type": "harness", "event": "message", "message": rec})
         return rec
 

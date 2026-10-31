@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS agents (
     paused      INTEGER NOT NULL DEFAULT 0,
     limits      TEXT NOT NULL DEFAULT '{}',   -- JSON, e.g. {"daily_usd": 2.0}
     always      TEXT NOT NULL DEFAULT '[]',   -- JSON list of exact commands approved "always" for this agent
+    team        TEXT,                         -- team it was started with (H7), if any
     usage_usd   REAL NOT NULL DEFAULT 0,
     created_at  REAL NOT NULL,
     updated_at  REAL NOT NULL
@@ -39,7 +40,8 @@ CREATE TABLE IF NOT EXISTS messages (
     cost    REAL,
     thread  TEXT,                          -- conversation a message belongs to (starts at a user message)
     hop     INTEGER NOT NULL DEFAULT 0,    -- agent-to-agent hand-offs since the user's message
-    route   TEXT                           -- why this model: 'pinned' or 'auto: <tier> (<why>)'
+    route   TEXT,                          -- why this model: 'pinned' or 'auto: <tier> (<why>)'
+    pending INTEGER NOT NULL DEFAULT 0     -- 1 while a delivered-to-inbox message hasn't finished its turn
 );
 CREATE INDEX IF NOT EXISTS messages_agent ON messages(agent, id);
 CREATE TABLE IF NOT EXISTS holds (
@@ -57,8 +59,9 @@ CREATE TABLE IF NOT EXISTS holds (
 
 _JSON = ("scope", "model", "limits", "always")
 # Columns added after a table first shipped: (table, column, definition).
-_ADDED = [("agents", "limits", "TEXT NOT NULL DEFAULT '{}'"), ("agents", "always", "TEXT NOT NULL DEFAULT '[]'"), ("messages", "thread", "TEXT"),
-          ("messages", "hop", "INTEGER NOT NULL DEFAULT 0"), ("messages", "route", "TEXT")]
+_ADDED = [("agents", "limits", "TEXT NOT NULL DEFAULT '{}'"), ("agents", "always", "TEXT NOT NULL DEFAULT '[]'"), ("agents", "team", "TEXT"), ("messages", "thread", "TEXT"),
+          ("messages", "hop", "INTEGER NOT NULL DEFAULT 0"), ("messages", "route", "TEXT"),
+          ("messages", "pending", "INTEGER NOT NULL DEFAULT 0")]
 
 
 def open_db(path: Path = DB_PATH) -> sqlite3.Connection:
@@ -88,11 +91,12 @@ def _row(r: sqlite3.Row | None) -> dict | None:
 
 
 def create_agent(conn, name: str, persona: str, project: str, brief: str, scope: list[str], model: dict,
-                 limits: dict) -> dict:
+                 limits: dict, always: list[str] | None = None, team: str | None = None) -> dict:
     now = time.time()
-    conn.execute("INSERT INTO agents(name,persona,project,brief,scope,model,limits,created_at,updated_at) "
-                 "VALUES(?,?,?,?,?,?,?,?,?)",
-                 (name, persona, project, brief, json.dumps(scope), json.dumps(model), json.dumps(limits), now, now))
+    conn.execute("INSERT INTO agents(name,persona,project,brief,scope,model,limits,always,team,created_at,updated_at) "
+                 "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                 (name, persona, project, brief, json.dumps(scope), json.dumps(model), json.dumps(limits),
+                  json.dumps(always or []), team, now, now))
     conn.commit()
     return get_agent(conn, name)
 
@@ -128,10 +132,11 @@ def delete_agent(conn, name: str) -> None:
 
 def log_message(conn, agent: str, role: str, sender: str, text: str, model: str | None = None,
                 cost: float | None = None, thread: str | None = None, hop: int = 0,
-                route: str | None = None) -> dict:
+                route: str | None = None, pending: bool = False) -> dict:
     ts = time.time()
-    cur = conn.execute("INSERT INTO messages(agent,ts,role,sender,text,model,cost,thread,hop,route) "
-                       "VALUES(?,?,?,?,?,?,?,?,?,?)", (agent, ts, role, sender, text, model, cost, thread, hop, route))
+    cur = conn.execute("INSERT INTO messages(agent,ts,role,sender,text,model,cost,thread,hop,route,pending) "
+                       "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                       (agent, ts, role, sender, text, model, cost, thread, hop, route, int(pending)))
     conn.commit()
     return {"id": cur.lastrowid, "agent": agent, "ts": ts, "role": role, "sender": sender, "text": text,
             "model": model, "cost": cost, "thread": thread, "hop": hop, "route": route}
@@ -177,3 +182,14 @@ def holds(conn, status: str | None = "pending", limit: int = 100) -> list[dict]:
         q, args = q + " WHERE status=?", [status]
     rows = conn.execute(q + " ORDER BY id DESC LIMIT ?", (*args, limit)).fetchall()
     return [get_hold(conn, r[0]) for r in rows]
+
+
+def finish_message(conn, message_id: int) -> None:
+    conn.execute("UPDATE messages SET pending=0 WHERE id=?", (message_id,))
+    conn.commit()
+
+
+def pending_messages(conn) -> list[dict]:
+    """Inbox messages whose turn never finished (the process stopped first), oldest first."""
+    rows = conn.execute("SELECT m.* FROM messages m JOIN agents a ON a.name = m.agent WHERE m.pending=1 ORDER BY m.id")
+    return [dict(r) for r in rows]

@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import data, devstatus, projects as projects_mod, registry, resources as resources_mod, services as services_mod, testusers as testusers_mod, tracker
-from .harness import library as harness_library, store as harness_store
+from .harness import library as harness_library, store as harness_store, teams as harness_teams
 from .harness.runtime import Harness, HarnessError
 from .process_manager import ProcessManager, SpawnError
 from .voice_bridge import VoiceBridge
@@ -89,6 +89,7 @@ harness = Harness(harness_store.open_db(), hub.broadcast, lambda n: _project_roo
 @contextlib.asynccontextmanager
 async def lifespan(_app: FastAPI):
     task = asyncio.create_task(bridge.run())
+    await harness.recover()  # deliver anything a previous run stopped in the middle of
     try:
         yield
     finally:
@@ -702,6 +703,33 @@ async def harness_library_add(kind: str, name: str, req: AddReq, project: str | 
         defn = harness_library.get(kind, project, _lib_root(kind, project), name)
         target = project if kind == "expert" else req.project
         return await harness.create(req.name or defn["name"], project=target or "", **harness_library.to_agent(defn))
+    return await _harness(go)
+
+
+# Team templates (H7): brain/agents/teams/*.json.
+class TeamReq(BaseModel):
+    project: str
+    prefix: str = ""
+    inputs: dict[str, str | None] = {}
+
+
+@app.get("/api/harness/teams")
+async def harness_team_templates():
+    return await _harness(lambda: asyncio.to_thread(harness_teams.list_templates))
+
+
+@app.post("/api/harness/teams/{template}/start")
+async def harness_team_start(template: str, req: TeamReq):
+    async def go():
+        return await harness_teams.start(harness, template, req.project, _lib_root("expert", req.project), _personas(),
+                                         req.prefix, req.inputs)
+    return await _harness(go)
+
+
+@app.delete("/api/harness/teams/{team}")
+async def harness_team_remove(team: str):
+    async def go():
+        return {"removed": await harness_teams.remove(harness, team)}
     return await _harness(go)
 
 

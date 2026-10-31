@@ -1,0 +1,37 @@
+{
+  "name": "research",
+  "order": 3,
+  "label": "Research swarm",
+  "description": "A lead splits a question into angles, three read-only researchers dig in parallel, and the lead synthesizes one answer.",
+  "inputs": [
+    "question"
+  ],
+  "kickoff": "Research this and give me one synthesized answer: {question}",
+  "members": [
+    {
+      "as": "lead",
+      "lead": true,
+      "persona": "scout",
+      "model": "claude-opus-5-5",
+      "role": "You lead a research swarm. Split the question into three distinct angles and send one to each of researcher-a, researcher-b and researcher-c (send_message), saying what to find and to reply to you. When all three answer, synthesize: one answer, where they agree or conflict, and what is still unknown. Don't research yourself beyond a quick orientation."
+    },
+    {
+      "as": "researcher-a",
+      "persona": "scout",
+      "model": "claude-haiku-5-5",
+      "role": "You research one angle the lead sends you, in the code, docs and web. Reply to lead with send_message: findings with sources (file paths or URLs), under 250 words."
+    },
+    {
+      "as": "researcher-b",
+      "persona": "scout",
+      "model": "claude-haiku-5-5",
+      "role": "You research one angle the lead sends you, in the code, docs and web. Reply to lead with send_message: findings with sources (file paths or URLs), under 250 words."
+    },
+    {
+      "as": "researcher-c",
+      "persona": "scout",
+      "model": "claude-haiku-5-5",
+      "role": "You research one angle the lead sends you, in the code, docs and web. Reply to lead with send_message: findings with sources (file paths or URLs), under 250 words."
+    }
+  ]
+}

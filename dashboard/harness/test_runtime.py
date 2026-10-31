@@ -293,6 +293,35 @@ async def test_tracker_tools(tmp):
     assert any(m["sender"] == "tracker" for m in store.messages(h.conn, "planner"))
 
 
+@run
+async def test_restart_redelivers_unfinished_turns(tmp):
+    h, _, _ = make(tmp)
+    await h.create("planner", "scout", "app")
+    await h.create("builder", "builder", "app")
+    started = asyncio.Event()
+
+    async def hang(client, prompt):  # the server stops while this turn is still running
+        started.set()
+        await asyncio.sleep(3600)
+    FakeClient.on_turn = hang
+    await h.send("planner", "plan the cache")
+    await started.wait()
+    await h.pause("builder")
+    await h.send("builder", "queued while paused")
+    await h.stop_all()
+    FakeClient.on_turn = None
+    h2 = Harness(store.open_db(tmp / "h.db"), h.broadcast, h.project_root, h.personas, client_factory=FakeClient,
+                 idle_secs=60, audit=lambda e: None)
+    assert await h2.recover() == 2
+    await drain(h2, "planner")
+    prompt = FakeClient.instances[-1].prompts[-1]
+    assert "Re-delivered after the dashboard restarted" in prompt and prompt.endswith("plan the cache")
+    assert h2.view("builder")["state"] == "paused"  # still paused: its message waits, it isn't dropped
+    await h2.resume("builder")
+    await drain(h2, "builder")
+    assert store.pending_messages(h2.conn) == [] and await h2.recover() == 0
+
+
 def test_routing_rules_load():
     from .routing import decide
     assert decide("commit and push it")[:2] == ("light", "git")
@@ -465,7 +494,7 @@ async def test_delete_releases_waiting_hold(tmp):
 TESTS = [test_create_validates, test_turn_logs_usage_and_session, test_teammate_prefix_and_serial_inbox,
          test_model_change_switches_live, test_idle_close_then_resume, test_pause_holds_inbox,
          test_delete_stops_and_forgets, test_bus_relays_with_thread_and_hops, test_ping_pong_stops_at_hop_limit,
-         test_daily_cap_parks_message_and_pauses, test_auto_routes_each_turn, test_tracker_tools, test_routing_rules_load,
+         test_daily_cap_parks_message_and_pauses, test_auto_routes_each_turn, test_tracker_tools, test_restart_redelivers_unfinished_turns, test_routing_rules_load,
          test_resolve_model_auto_clamps, test_gate_policy, test_hold_approve_always_then_auto_allow,
          test_hold_deny_and_expire, test_push_is_never_always_allowed, test_writer_scope_locks, test_kill_switch,
          test_delete_releases_waiting_hold]
