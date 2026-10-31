@@ -588,3 +588,5 @@ a.res-link:hover { border-color: var(--bd-hover); color: var(--tx); }
 .rail .foot .team-use { margin-top: 8px; }
 @media (prefers-reduced-motion: reduce) { .bdot.pulse { animation: none; } }
 @media (max-width: 1000px) { .team .appv-body { grid-template-columns: minmax(0, 1fr); } .tm-msg { max-width: 100%; } }
+.tm-add { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; padding-top: 14px; border-top: 1px solid var(--divider); }
+.tm-add .lgroup-h { padding: 0; }

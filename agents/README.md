@@ -16,10 +16,17 @@ agents/
 │   ├── scout.md         # Collaborative · READ-ONLY  (voice default)
 │   ├── reviewer.md      # Collaborative · read + comment
 │   └── builder.md       # Autonomous · scoped read/write/bash
-└── background/          # Unattended / scheduled agents
-    ├── operator.md      # Autonomous · tightest scope + full logging
-    └── runner.sh        # Headless `claude -p` wrapper for scheduled runs
+├── background/          # Unattended / scheduled agents
+│   ├── operator.md      # Autonomous · tightest scope + full logging
+│   └── runner.sh        # Headless `claude -p` wrapper for scheduled runs
+└── workflow/            # Team agent definitions (NOT installed as subagents)
+    └── planner.md …     # brainstormer · planner · builder · reviewer · reflector
 ```
+
+`workflow/` holds definitions for the **agent harness** (Hub → Team): long-lived agents built on
+a persona plus a role. Project experts live beside their project in `<project>/.brain/agents/`.
+Edit both from the Team view's Library; adding one to the team copies its settings into a live
+agent. `install.sh` only links `personas/` and `background/`, so these never become subagents.
 
 ---
 

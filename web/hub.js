@@ -1171,7 +1171,10 @@ function selectFld(label, options, cur, onChange) {
 }
 
 function mountTeam(root) {
-  const T = { agents: [], holds: [], sel: null, drawn: undefined, creating: false, seen: new Set(), personas: [], projects: [] };
+  const T = { agents: [], holds: [], sel: null, drawn: undefined, creating: false, seen: new Set(), personas: [], projects: [],
+    library: [], lib: null };  // lib: selected definition key "kind:project:name", or "+def" for a new one
+  const shown = () => (T.creating ? "+new" : T.lib ? "lib:" + T.lib : T.sel);
+  const defKey = (d) => `${d.kind}:${d.project || ""}:${d.name}`;
   try { T.sel = localStorage.getItem("teamsel"); } catch {}
   root.className = "appv team";
   const bar = el("div", "appv-bar"), holds = el("div", "tm-holds"), body = el("div", "appv-body");
@@ -1196,7 +1199,7 @@ function mountTeam(root) {
       pill("pulse", String(working), "working"), pill("chart", money(today), "used today"));
     if (T.holds.length) pills.append(pill("alert", String(T.holds.length), "waiting on you", "warn"));
     bar.append(pills, el("span", "grow"),
-      btn("New agent", { kind: "primary", icon: "users", onClick: () => { T.creating = true; drawDetail(); drawRoster(); } }),
+      btn("New agent", { kind: "primary", icon: "users", onClick: () => { T.creating = true; T.lib = null; drawDetail(); drawRoster(); } }),
       btn("Stop everything", { kind: "danger", icon: "ban", disabled: !T.agents.length,
         title: "Deny everything waiting, pause every agent, stop running turns",
         onClick: async () => {
@@ -1234,7 +1237,7 @@ function mountTeam(root) {
     g.append(el("h3", "lgroup-h", "Agents"));
     if (!T.agents.length) g.append(el("p", "lnote", "No agents yet. Create one to start a team."));
     T.agents.forEach((a) => {
-      const on = !T.creating && a.name === T.sel;
+      const on = shown() === a.name;
       const r = el("div", "lrow tm-lane" + (on ? " on" : ""));
       const main = el("button", "lrow-main");
       main.type = "button";
@@ -1251,11 +1254,49 @@ function mountTeam(root) {
       r.append(main);
       g.append(r);
     });
-    list.append(g);
+    list.append(g, drawLibraryList());
+  }
+
+  function drawLibraryList() {
+    const g = el("div");
+    g.append(el("h3", "lgroup-h", "Library"));
+    const row = (d) => {
+      const on = T.lib === defKey(d);
+      const r = el("div", "lrow tm-lane" + (on ? " on" : ""));
+      const main = el("button", "lrow-main");
+      main.type = "button";
+      main.setAttribute("aria-current", on ? "true" : "false");
+      const txt = el("span", "tm-lane-t");
+      txt.append(el("span", "lrow-l", d.name), el("span", "tm-lane-s", d.description || d.persona));
+      main.append(icon("book", 15), txt);
+      main.onclick = () => openDef(defKey(d));
+      r.append(main);
+      return r;
+    };
+    const wf = T.library.filter((d) => d.kind === "workflow"), ex = T.library.filter((d) => d.kind === "expert");
+    g.append(el("div", "lsub", "Workflow agents"));
+    wf.forEach((d) => g.append(row(d)));
+    if (!wf.length) g.append(el("p", "lnote", "None yet."));
+    g.append(el("div", "lsub", "Project experts"));
+    ex.forEach((d) => { const r = row(d); r.querySelector(".tm-lane-s").textContent = d.project; g.append(r); });
+    if (!ex.length) g.append(el("p", "lnote", "None yet. Generate one from a project's files."));
+    const add = el("div", "lrow" + (T.lib === "+def" ? " on" : ""));
+    const b = el("button", "lrow-main");
+    b.type = "button";
+    b.append(icon("book", 15), el("span", "lrow-l", "New definition…"));
+    b.onclick = () => openDef("+def");
+    add.append(b);
+    g.append(add);
+    return g;
+  }
+
+  function openDef(key) {
+    T.lib = key; T.creating = false;
+    drawRoster(); drawDetail();
   }
 
   function selectAgent(name) {
-    T.sel = name; T.creating = false;
+    T.sel = name; T.creating = false; T.lib = null;
     try { localStorage.setItem("teamsel", name); } catch {}
     drawRoster(); drawDetail();
   }
@@ -1405,10 +1446,91 @@ function mountTeam(root) {
     return f;
   }
 
+  function buildDefinition(d) {
+    const isNew = !d;
+    const v = d ? { ...d } : { kind: "workflow", project: (T.projects[0] || {}).name || "", name: "", description: "",
+      persona: "scout", model: "claude-sonnet-5-5", scope: ".", daily_usd: 2, role: "" };
+    const orig = d && d.name;
+    const f = el("form", "dt-form tm-create");
+    f.noValidate = true;
+    const top = el("div", "dt-top");
+    const title = el("div", "dt-title");
+    title.append(icon("book", 18), el("h2", null, isNew ? "New definition" : d.name),
+      el("span", "badge", d ? (d.kind === "workflow" ? "Workflow agent" : `Expert · ${d.project}`) : "Library"));
+    top.append(title);
+    const where = () => (v.kind === "workflow" ? `brain/agents/workflow/${v.name || "<name>"}.md`
+      : `${v.project}/.brain/agents/${v.name || "<name>"}.md`);
+    const path = el("p", "fld-h");
+    const setPath = () => (path.textContent = `Saved as ${where()} — commit it to share it across machines.`);
+    const grid = el("div", "fgrid");
+    const kindRow = el("div", "fgrid");
+    const projSel = selectFld("Project", T.projects.map((p) => [p.name, p.name]), v.project, (x) => { v.project = x; setPath(); });
+    if (isNew) {
+      kindRow.append(selectFld("Kind", [["workflow", "Workflow agent (any project)"], ["expert", "Project expert"]], v.kind, (x) => {
+        v.kind = x; projSel.style.display = x === "expert" ? "" : "none"; seedBtn.style.display = x === "expert" ? "" : "none"; setPath();
+      }), projSel);
+      projSel.style.display = "none";
+    }
+    grid.append(field({ name: "name", label: "Name", required: true, maxlen: 32, help: "e.g. planner" }, v.name, (x) => { v.name = x.trim(); setPath(); }),
+      field({ name: "description", label: "Description", required: false, maxlen: 200 }, v.description, (x) => (v.description = x)),
+      selectFld("Persona", T.personas.map((p) => [p.name, `${p.name}${p.read_only ? " (read-only)" : " (can write)"}`]), v.persona, (x) => (v.persona = x)),
+      selectFld("Model", [...MODELS, ["auto", "Auto, per message"]], v.model, (x) => (v.model = x)),
+      field({ name: "scope", label: "Writes inside", required: true, help: "folders, relative to the project" }, v.scope, (x) => (v.scope = x)),
+      field({ name: "daily", label: "Daily usage cap ($)", type: "number", min: 0.01, max: 100, required: true }, v.daily_usd, (x) => (v.daily_usd = Number(x))));
+    const role = el("label", "fld");
+    const rt = el("textarea"); rt.rows = 7; rt.maxLength = 2000; rt.value = v.role;
+    rt.placeholder = "The role: what it does, who it hands work to, and how it reports back.";
+    rt.oninput = () => (v.role = rt.value);
+    role.append(el("span", "fld-l", "Role"), rt);
+    const acts = el("div", "dt-acts");
+    const save = btn(isNew ? "Save definition" : "Save", { kind: "primary", icon: "ok" });
+    save.type = "submit";
+    const q = () => (v.kind === "expert" ? `?project=${enc(v.project)}` : "");
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      save.disabled = true;
+      const r = await call(`/api/harness/library/${v.kind}/${enc(orig || v.name)}${q()}`, "PUT",
+        { name: v.name, description: v.description, persona: v.persona, model: v.model, scope: v.scope, daily_usd: v.daily_usd, role: v.role });
+      save.disabled = false;
+      if (r) { T.lib = defKey(r); await refresh(); flash(save, "Saved"); }
+    };
+    acts.append(save);
+    const seedBtn = btn("Generate from project files", { icon: "book", title: "Write an expert grounded in the project's CLAUDE.md, docs, tasks and memory",
+      onClick: async () => { const r = await call(`/api/harness/library/seed/${enc(v.project)}`); if (r) { T.lib = defKey(r); await refresh(); } } });
+    if (isNew) { seedBtn.style.display = "none"; acts.append(seedBtn); }
+    else acts.append(btn("Delete", { kind: "ghost", icon: "trash", onClick: async () => {
+      if (!winOf(root).confirm(`Delete the ${d.name} definition? Agents already on the team keep running.`)) return;
+      if (await call(`/api/harness/library/${d.kind}/${enc(d.name)}${q()}`, "DELETE")) { T.lib = null; refresh(); }
+    } }));
+    f.append(top, kindRow, grid, role, path, acts);
+    if (!isNew) f.append(buildAdd(d));
+    setPath();
+    return f;
+  }
+
+  function buildAdd(d) {
+    const box = el("div", "tm-add");
+    box.append(el("h3", "lgroup-h", "Add to the team"));
+    const v = { project: d.project || (T.projects[0] || {}).name || "", name: d.name };
+    const grid = el("div", "fgrid");
+    if (d.kind === "workflow") grid.append(selectFld("Works on", T.projects.map((p) => [p.name, p.name]), v.project, (x) => (v.project = x)));
+    grid.append(field({ name: "live", label: "Agent name", required: true, maxlen: 32 }, v.name, (x) => (v.name = x.trim())));
+    const go = btn("Add to team", { kind: "primary", icon: "users", onClick: async () => {
+      go.disabled = true;
+      const r = await call(`/api/harness/library/${d.kind}/${enc(d.name)}/add${d.kind === "expert" ? `?project=${enc(d.project)}` : ""}`, "POST",
+        { project: v.project, name: v.name });
+      go.disabled = false;
+      if (r) { await refresh(); selectAgent(r.name); }
+    } });
+    box.append(grid, el("p", "fld-h", "The new agent gets a copy of these settings; later edits here don't change it."), go);
+    return box;
+  }
+
   async function drawDetail() {
     detail.innerHTML = ""; head = log = settings = null; T.seen = new Set();
-    T.drawn = T.creating ? "+new" : T.sel;
+    T.drawn = shown();
     if (T.creating) { detail.append(buildCreate()); detail.querySelector("input")?.focus(); return; }
+    if (T.lib) { detail.append(buildDefinition(T.library.find((d) => defKey(d) === T.lib))); return; }
     const a = agent();
     if (!a) { detail.append(el("p", "empty", T.agents.length ? "Pick an agent." : "Create an agent to get started.")); return; }
     head = el("div", "tm-head");
@@ -1426,11 +1548,13 @@ function mountTeam(root) {
   }
 
   async function refresh() {
-    const [agents, pending] = await Promise.all([api("/api/harness/agents").catch(() => []), api("/api/harness/holds").catch(() => [])]);
-    T.agents = agents; T.holds = pending;
+    const [agents, pending, lib] = await Promise.all([api("/api/harness/agents").catch(() => []),
+      api("/api/harness/holds").catch(() => []), api("/api/harness/library").catch(() => T.library)]);
+    T.agents = agents; T.holds = pending; T.library = lib;
+    if (T.lib && T.lib !== "+def" && !lib.some((d) => defKey(d) === T.lib)) T.lib = null;
     if (!agent() && !T.creating) T.sel = (agents[0] || {}).name || null;
     drawBar(); drawHolds(); drawRoster();
-    if (T.drawn !== (T.creating ? "+new" : T.sel)) drawDetail(); else drawHead();
+    if (T.drawn !== shown()) drawDetail(); else if (!T.lib && !T.creating) drawHead();
   }
 
   const onEvent = (e) => {

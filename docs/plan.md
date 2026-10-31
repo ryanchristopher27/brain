@@ -1593,3 +1593,29 @@ Findings that change the build:
 - Trial task, sandbox and agents removed afterwards. Tests: 21 harness tests + all dashboard suites pass.
 - **Learned for H6/H7:** a reviewer that should run tests needs either its commands pre-approved
   ("always") or a narrower persona allowing test runs; worth a "reviewer can run tests in scope" option.
+
+## Agent Harness — H6 done (2026-10-31): agent library
+- **Definitions are files in git:** Markdown + frontmatter (`name, description, persona, model|auto, scope,
+  daily_usd`) with the role as the body. Workflow agents in `brain/agents/workflow/` (any project);
+  project experts in `<project>/.brain/agents/` (travel with that repo). Values are YAML-quoted with the
+  tracker's helpers — a bare colon in a description is invalid YAML, the same bug that broke the
+  Obsidian vault, and experts live inside `.brain/`. `install.sh` only links `personas/` and
+  `background/`, so these never become Claude Code subagents.
+- **Five workflow agents:** brainstormer, planner (team lead, Opus), builder, reviewer, reflector. Each
+  role points at the matching `~/.claude/commands/<phase>.md` instead of copying it, so the command
+  stays the single source of how a phase works.
+- **Project experts, generated not hand-written:** `seed_expert` writes a scout definition whose role
+  lists the grounding files that project actually has (CLAUDE.md, README, docs/*, open tracker tasks,
+  and Claude Code's memory index for that folder). No model call.
+- **Definitions are templates:** "Add to the team" creates a live agent with a copy of the settings
+  (workflow agents pick the project they work on); editing a definition later doesn't change live agents.
+- API: `GET /api/harness/library`, `PUT|DELETE /api/harness/library/{workflow|expert}/{name}[?project=]`
+  (PUT with a new name renames), `POST /api/harness/library/seed/{project}`,
+  `POST /api/harness/library/{kind}/{name}/add[?project=]`.
+- Hub: Team view gains a Library section (workflow agents, project experts, "New definition…"), an
+  editor (kind, project, persona, model incl. auto, scope, cap, role; shows the file path it saves to),
+  "Generate from project files" for experts, and "Add to the team".
+- Tests: `dashboard.harness.test_library` (5: YAML-safe round trip, validation incl. traversal, experts in
+  their project, memory path, definition → live agent). Live: generated a brain expert in the browser,
+  added it to the team, and it answered a question about the harness correctly with file citations;
+  added `planner` to the team from the library. Test expert + agents removed afterwards.

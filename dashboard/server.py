@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import data, devstatus, projects as projects_mod, registry, resources as resources_mod, services as services_mod, testusers as testusers_mod, tracker
-from .harness import store as harness_store
+from .harness import library as harness_library, store as harness_store
 from .harness.runtime import Harness, HarnessError
 from .process_manager import ProcessManager, SpawnError
 from .voice_bridge import VoiceBridge
@@ -628,6 +628,81 @@ async def harness_decide(hold_id: int, decision: str, req: DecideReq):
 @app.post("/api/harness/kill")
 async def harness_kill():
     return await _harness(harness.kill)
+
+
+# Agent library (H6): definitions as files — brain/agents/workflow/ and <project>/.brain/agents/.
+class DefinitionReq(BaseModel):
+    name: str
+    description: str = ""
+    persona: str
+    model: str
+    scope: str = "."
+    daily_usd: float = 2
+    role: str = ""
+
+
+class AddReq(BaseModel):
+    project: str | None = None  # where a workflow agent works; experts use their own project
+    name: str | None = None     # live agent name (defaults to the definition's)
+
+
+def _lib_root(kind: str, project: str | None):
+    if kind not in harness_library.KINDS:
+        raise HarnessError("unknown library kind", 404)
+    if kind == "workflow":
+        return None
+    root = _project_root(project or "")
+    if root is None:
+        raise HarnessError("unknown project")
+    return root
+
+
+def _personas() -> set[str]:
+    return {a["name"] for a in data.read_agents()}
+
+
+@app.get("/api/harness/library")
+async def harness_library_list():
+    return await _harness(lambda: asyncio.to_thread(harness_library.list_library, data._project_roots()))
+
+
+@app.put("/api/harness/library/{kind}/{name}")
+async def harness_library_save(kind: str, name: str, req: DefinitionReq, project: str | None = None):
+    async def go():
+        root = _lib_root(kind, project)
+        saved = harness_library.save(kind, root, req.model_dump(), _personas())
+        if saved["name"] != name:  # renamed: drop the old file
+            try:
+                harness_library.delete(kind, root, name)
+            except HarnessError:
+                pass
+        return {**saved, "kind": kind, "project": project}
+    return await _harness(go)
+
+
+@app.delete("/api/harness/library/{kind}/{name}")
+async def harness_library_delete(kind: str, name: str, project: str | None = None):
+    async def go():
+        harness_library.delete(kind, _lib_root(kind, project), name)
+        return {"ok": True}
+    return await _harness(go)
+
+
+@app.post("/api/harness/library/seed/{project}")
+async def harness_library_seed(project: str):
+    async def go():
+        return {**harness_library.seed_expert(project, _lib_root("expert", project), _personas()),
+                "kind": "expert", "project": project}
+    return await _harness(go)
+
+
+@app.post("/api/harness/library/{kind}/{name}/add")
+async def harness_library_add(kind: str, name: str, req: AddReq, project: str | None = None):
+    async def go():
+        defn = harness_library.get(kind, project, _lib_root(kind, project), name)
+        target = project if kind == "expert" else req.project
+        return await harness.create(req.name or defn["name"], project=target or "", **harness_library.to_agent(defn))
+    return await _harness(go)
 
 
 @app.post("/api/harness/agents/{name}/{op}")
