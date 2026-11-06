@@ -5,11 +5,19 @@ state of all your projects' markdown artifacts up to GitHub.
 
 ## Do this
 
-Run this single command (it targets the brain repo regardless of your current directory) and
-report its output to the user verbatim:
+Run the command for this machine and report its output to the user verbatim. The CLI always
+targets the brain repo it lives in, whatever the current directory.
+
+macOS:
 
 ```
 /Users/rchristopher/Desktop/Code/brain/voice/.venv/bin/python -m dashboard.artifacts_cli push
+```
+
+Windows (no venv needed; the CLI is stdlib-only):
+
+```
+python C:\Users\rdash\OneDrive\Desktop\Code\brain\dashboard\artifacts_cli.py push
 ```
 
 Pass `--message "…"` to set the artifact commit message, `--dry-run` to preview without

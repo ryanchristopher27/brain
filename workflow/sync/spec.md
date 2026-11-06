@@ -30,6 +30,11 @@ in an LLM prompt, so `/sync` is reliable and testable):
 - **Conflicts are never auto-resolved**: a conflicting rebase is aborted (clean repo restored) and
   reported for manual resolution.
 - No `--force`; a rejected push is surfaced, not overridden — the user reconciles (re-run `/sync`).
+- Generated files are always UTF-8, whatever the platform default, so macOS and Windows produce
+  the same bytes.
+- The mirror prunes archived files missing from the source, so a machine whose checkout lacks a
+  project's latest local task records would erase them from the archive. Leave such a project out
+  of that machine's registry until its checkout has caught up.
 - `--dry-run` previews pull + commit + push scope (fetches for accurate counts) without mutating
   the working tree or history.
 

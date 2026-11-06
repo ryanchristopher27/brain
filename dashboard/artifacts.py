@@ -61,7 +61,7 @@ def _project_sessions(name: str) -> tuple[str, int]:
     match, so 'prediction_market_bot' matches registry 'prediction-market-bot')."""
     if not QUEUE.exists():
         return "", 0
-    parts = re.split(r"(?m)^(## .+)$", QUEUE.read_text())
+    parts = re.split(r"(?m)^(## .+)$", QUEUE.read_text(encoding="utf-8"))
     reg = _norm(name)
     blocks: list[str] = []
     i = 1
@@ -90,7 +90,8 @@ def sync_project(name: str, root: Path) -> dict:
             dest.mkdir(parents=True, exist_ok=True)
             (dest / "sessions.md").write_text(
                 f"# {name} — session summaries\n\n"
-                f"_Extracted from brain's `updates/queue.md`._\n\n{sessions_text}\n"
+                f"_Extracted from brain's `updates/queue.md`._\n\n{sessions_text}\n",
+                encoding="utf-8",
             )
         deliv = sorted((dest / "deliverables").glob("*")) if (dest / "deliverables").is_dir() else []
         result.update(docs=len(docs), tasks=len(tasks), sessions=n_sessions, deliverables=len(deliv))
@@ -116,7 +117,7 @@ def _write_index(name: str, root: Path, dest: Path, counts: dict) -> None:
         "on SessionStart.",
     ]
     dest.mkdir(parents=True, exist_ok=True)
-    (dest / "INDEX.md").write_text("\n".join(lines) + "\n")
+    (dest / "INDEX.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def mark(project: str, file: str, note: str = "") -> dict:
@@ -129,8 +130,8 @@ def mark(project: str, file: str, note: str = "") -> dict:
     shutil.copy2(src, dest / src.name)
     log = dest / "_deliverables.md"
     entry = f"- {_now()} · **{src.name}** ← `{src}`" + (f" — {note}" if note else "")
-    prior = log.read_text() if log.exists() else "# Marked deliverables\n\n"
-    log.write_text(prior + entry + "\n")
+    prior = log.read_text(encoding="utf-8") if log.exists() else "# Marked deliverables\n\n"
+    log.write_text(prior + entry + "\n", encoding="utf-8")
     return {"project": project, "file": src.name, "dest": str(dest / src.name)}
 
 
@@ -142,7 +143,7 @@ def _preview(path: Path) -> tuple[str, str]:
     """(title, excerpt) for an artifact card's rendered thumbnail. Reads a small prefix,
     drops YAML frontmatter, and cleans markdown noise from the first lines."""
     try:
-        text = path.read_text(errors="ignore")[:4000]
+        text = path.read_text(encoding="utf-8", errors="ignore")[:4000]
     except Exception:
         return "", ""
     lines = text.splitlines()
@@ -204,7 +205,9 @@ def write_catalog() -> None:
     """Top-level README cataloging every project's archived artifacts."""
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     rows = []
-    for sub in sorted(p for p in ARTIFACTS_DIR.iterdir() if p.is_dir()):
+    # Sort by name string: Path ordering is case-insensitive on Windows, which would reshuffle
+    # the catalog between machines.
+    for sub in sorted((p for p in ARTIFACTS_DIR.iterdir() if p.is_dir()), key=lambda p: p.name):
         docs = len(list((sub / "docs").glob("*.md"))) if (sub / "docs").is_dir() else 0
         tasks = len(list((sub / "tasks").glob("*.md"))) if (sub / "tasks").is_dir() else 0
         sess = "yes" if (sub / "sessions.md").exists() else "—"
@@ -221,5 +224,6 @@ def write_catalog() -> None:
         "| Project | Docs | Tasks | Sessions | Deliverables |\n"
         "|---------|-----:|------:|:--------:|-------------:|\n"
         f"{table}\n\n"
-        "_Regenerate: `python -m dashboard.artifacts_cli sync --all` · push: `/sync`._\n"
+        "_Regenerate: `python -m dashboard.artifacts_cli sync --all` · push: `/sync`._\n",
+        encoding="utf-8",
     )

@@ -35,7 +35,20 @@ def test_sync_copies_docs_and_tasks_and_writes_index():
     assert r["docs"] == 2 and r["tasks"] == 1                 # .gitkeep excluded
     assert (dest / "docs" / "plan.md").read_text() == "# plan"
     assert (dest / "tasks" / "abc-thing.md").exists()
-    assert "Workflow docs:** 2" in (dest / "INDEX.md").read_text()
+    assert "Workflow docs:** 2" in (dest / "INDEX.md").read_text(encoding="utf-8")
+
+
+def test_generated_files_are_utf8_on_every_platform():
+    # Regression: Path.write_text() defaults to cp1252 on Windows, corrupting em dashes.
+    proj = _sandbox()
+    (proj / "docs" / "plan.md").write_text("# plan")
+    artifacts.QUEUE.write_text("## 2026-06-05 — proj\n- did a thing — well\n", encoding="utf-8")
+    artifacts.sync_project("proj", proj)
+    artifacts.write_catalog()
+    for f in (artifacts.ARTIFACTS_DIR / "proj" / "INDEX.md",
+              artifacts.ARTIFACTS_DIR / "proj" / "sessions.md",
+              artifacts.ARTIFACTS_DIR / "README.md"):
+        assert "—" in f.read_bytes().decode("utf-8"), f
 
 
 def test_sync_prunes_removed_source():
@@ -54,12 +67,13 @@ def test_sessions_extracted_with_lenient_name_match():
     artifacts.QUEUE.write_text(
         "# queue\n\n"
         "## 2026-06-05 — prediction_market_bot\n- did a thing\n\n"
-        "## 2026-06-06 — other-project\n- unrelated\n"
+        "## 2026-06-06 — other-project\n- unrelated\n",
+        encoding="utf-8",
     )
     # registry name uses hyphens; queue uses underscores — must still match
     r = artifacts.sync_project("prediction-market-bot", proj)
     assert r["sessions"] == 1
-    text = (artifacts.ARTIFACTS_DIR / "prediction-market-bot" / "sessions.md").read_text()
+    text = (artifacts.ARTIFACTS_DIR / "prediction-market-bot" / "sessions.md").read_text(encoding="utf-8")
     assert "did a thing" in text and "unrelated" not in text
 
 
@@ -70,7 +84,7 @@ def test_mark_copies_deliverable_and_logs():
     r = artifacts.mark("proj", str(f), note="the spec")
     dest = artifacts.ARTIFACTS_DIR / "proj" / "deliverables"
     assert (dest / "spec.md").read_text() == "# spec"
-    assert "the spec" in (dest / "_deliverables.md").read_text()
+    assert "the spec" in (dest / "_deliverables.md").read_text(encoding="utf-8")
 
 
 def test_catalog_lists_synced_projects():
@@ -78,7 +92,7 @@ def test_catalog_lists_synced_projects():
     (proj / "docs" / "plan.md").write_text("# plan")
     artifacts.sync_project("proj", proj)
     artifacts.write_catalog()
-    readme = (artifacts.ARTIFACTS_DIR / "README.md").read_text()
+    readme = (artifacts.ARTIFACTS_DIR / "README.md").read_text(encoding="utf-8")
     assert "[proj](proj/INDEX.md)" in readme
 
 
