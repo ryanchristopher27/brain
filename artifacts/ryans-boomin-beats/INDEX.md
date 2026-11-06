@@ -1,6 +1,6 @@
 # ryans-boomin-beats — artifacts
 
-_Brain's copies of `ryans-boomin-beats`'s markdown artifacts. Source: `/Users/rchristopher/Desktop/Code/ryans-boomin-beats`._
+_Brain's copies of `ryans-boomin-beats`'s markdown artifacts. Source: `C:\Users\rdash\OneDrive\Desktop\Code\ryans-boomin-beats`._
 
 - **Workflow docs:** 7  (`docs/`)
 - **Task records:** 83  (`tasks/`)

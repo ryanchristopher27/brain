@@ -1,6 +1,6 @@
 # brain — artifacts
 
-_Brain's copies of `brain`'s markdown artifacts. Source: `/Users/rchristopher/Desktop/Code/brain`._
+_Brain's copies of `brain`'s markdown artifacts. Source: `C:\Users\rdash\OneDrive\Desktop\Code\brain`._
 
 - **Workflow docs:** 4  (`docs/`)
 - **Task records:** 25  (`tasks/`)
