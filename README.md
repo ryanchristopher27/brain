@@ -19,6 +19,7 @@ A complete project lifecycle as slash commands — invoke any phase manually, in
 | `/iterate` | Refinement | Address findings and feedback on existing work |
 | `/reflect` | Retrospective | Capture lessons, update memory, close with next steps |
 | `/status` | Orientation | Scan project state and suggest what to do next |
+| `/sync-setup` | Utility | Bring this machine up to date: pull brain and every project, deps, installer |
 
 ### Universal Rules
 Always-on behavior layer covering tone, response style, scope discipline, and security baseline. Applied in every session across all projects.
