@@ -1685,3 +1685,238 @@ Findings that change the build:
   memory notes on them (kept in brain's memory folder). Baseline registered as a project.
 - Tests: mod 6 (incl. start_team → quiet final report, follow skipping own threads, timer-only
   delivery); harness 23 runtime (+updates feed, secret files) / 6 teams.
+
+---
+
+# Plan — Dash, formerly Brok (one front door that routes to specialists)
+Date: 2026-11-07
+Status: Draft
+Brainstorm: inline (decisions taken in chat, 2026-11-07)
+
+## Overview
+
+Brok is the one agent you talk to. You tell it what you want; it picks the right specialist,
+hands the work off, follows up, and brings the result back. Specialists are of two kinds:
+
+- **Specialist chats**: ordinary Claude Code chats in the desktop app, one per project or role
+  (Trip Fairy, Boomin Beats, Baseline, brain…). You can open any of them and take over.
+- **Harness agents**: the dashboard's team agents (H0–H7), for background work such as
+  research, reviews, debates and pipelines, with budgets, scopes and Hub approvals.
+
+You reach Brok four ways: its pinned app chat, voice (the Operator), a Hub panel, and your phone.
+
+## Goals & Success Criteria
+
+- Say "fix the Trip Fairy map flicker" (typed, spoken, from the Hub, or from your phone). Brok
+  sends it to the Trip Fairy chat and tells you so in one line. When that chat finishes, Brok
+  reports the outcome without you asking.
+- Say "research whether Boomin Beats should move off Deezer". Brok starts a harness research team
+  and reports the synthesis when the lead finishes.
+- Brok never does project work itself. It routes, follows up and summarizes. Every handoff
+  is logged, and the Hub shows what's out, with whom, and since when.
+- Specialists keep their own permission rules. Brok never asks a specialist to do something
+  Brok's own session would be refused (no permission laundering). Risky steps still reach you.
+- A spoken request gets a spoken answer: the acknowledgement within a few seconds, the result
+  when it lands.
+
+## Scope
+
+### In Scope
+- Brok's role and a specialist roster: who handles what, and how to reach each.
+- Dispatch to chats (cross-session messages) and to harness agents (the `team` tools).
+- Follow-up: being told when a chat goes idle, reading its result, and the reply path back to
+  the right interface.
+- A Brok inbox on the dashboard, so voice and the Hub can talk to the Brok chat.
+- A Hub Brok panel: conversation, open handoffs, roster editor.
+- A Brok mode in the voice daemon.
+- Phone: Remote Control on the Brok chat, plus push notifications when results land.
+
+### Out of Scope
+- Brok creating new app chats. No tool for that is available to a session here, so you make
+  each specialist chat once and Brok finds it.
+- Brok splitting one goal across several projects on its own (that's "fully autonomous", not
+  chosen). It can still send two independent asks to two specialists.
+- Replacing the harness's planner. A planner leads a team; Brok routes between teams and chats.
+
+## Tech Stack & Architecture
+
+**Recommendation: Brok is a Claude Code desktop chat, with its behavior added by the `team` mod.**
+
+```
+ you ──typed / Remote Control (phone)──────────▶ ┌──────────────────────┐
+ voice daemon ─┐                                 │  Brok chat (pinned)  │
+ Hub panel ────┴─▶ dashboard /api/brok inbox ──▶ │  team mod, brok on:  │
+                   ◀── reply (turn.complete) ─── │  role + roster in    │
+                                                 │  system prompt       │
+                                                 └─┬─────────────────┬──┘
+                         SendMessage + notify_when_idle      mcp__team__send / start_team
+                                       ▼                                ▼
+                    specialist chats (app sidebar group)     harness agents (dashboard)
+```
+
+- **Why an app chat and not a harness agent:** only desktop chats can reach other chats
+  (`SendMessage` / `ListAgents` and the session tools: list sessions, read transcripts, Remote
+  Control). A headless harness agent can't. As a chat, Brok also gets the phone route
+  (Remote Control) and you can watch it work. *Alternative ruled out:* Brok as a harness agent
+  reaching chats through the dashboard. Nothing on the dashboard side can deliver into an app chat.
+- **Behavior through the mod, not a new plugin:** the `team` mod already polls the dashboard,
+  delivers turns with `prompt.submit` on its timer, and has the team tools. `/brok on` marks this
+  chat as Brok: `prompt.compose` adds Brok's role and the current roster to the system prompt,
+  `turn.complete` captures each answer to an injected message and posts it back to its sender,
+  and a `tool.call` hook logs every dispatch (`SendMessage`, `mcp__team__send`, `start_team`) to
+  the dashboard, so the handoff log doesn't depend on the model remembering to log.
+- **Roster on the dashboard:** a `brok_specialists` table holds name, kind (chat or agent),
+  target (session id, agent name or team template), what it handles, and its project. Session
+  ids are per machine, so this stays out of git, the same as `harness.db`. Brok can propose
+  roster additions it finds via `ListAgents`/`list_sessions` (for example a "Specialists" sidebar
+  group); you confirm them in the Hub.
+- **Routing is Brok's judgment, informed by the roster.** No classifier. Rule of thumb in the
+  role: code or project work goes to that project's chat; research, review, debate or long
+  unattended work goes to a harness team; questions it can answer from what it already knows
+  get answered directly.
+- **Follow-up:** chats: `SendMessage(notify_when_idle)`, then read the result from the chat's
+  transcript (`list_events`), or the specialist replies by `SendMessage`. Harness: the mod's
+  existing reply and follow delivery.
+- **Voice:** the daemon gets a `brok` bridge alongside `claude -p`. It posts the transcript to the
+  inbox, speaks the acknowledgement, and speaks the result when it lands. The Hub switch picks
+  the bridge.
+- **Phone:** Remote Control on the Brok chat (one switch, nothing to build), plus
+  `PushNotification` when a handoff completes while you're away.
+
+## Milestones
+| # | Milestone | Description | Dependencies |
+|---|-----------|-------------|--------------|
+| K0 | Probe | Prove the risky links: SendMessage into a specialist chat delivers (same permission mode), notify_when_idle fires, list_events reads the result; mod turn.complete captures an injected turn's answer; Remote Control on Brok from the phone | — |
+| K1 | Brok role + roster | `/brok on` in the team mod (prompt.compose role + roster), `brok_specialists` table + API, seed roster from registered projects and existing chats | K0 |
+| K2 | Dispatch & follow-up | Handoff log via tool.call hook, open-handoff tracking, results reported back unprompted; harness dispatch through team tools | K1 |
+| K3 | Brok inbox | Dashboard `/api/brok` inbox + replies; mod delivers inbox messages as turns and posts turn.complete answers back to the sender | K1 |
+| K4 | Hub Brok panel | Conversation, composer (via inbox), open handoffs, roster editor | K2, K3 |
+| K5 | Voice → Brok | Daemon `brok` bridge: post transcript, speak ack and result; Hub switch between Operator and Brok | K3 |
+| K6 | Phone | Remote Control on the Brok chat, push notifications on completed handoffs, end-to-end check away from the desk | K2 |
+
+## Risks & Mitigations
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| Cross-session messages wait for approval when a specialist chat runs in a different permission mode | High | High | K0 confirms the behavior. Roster shows each chat's mode, and Brok warns when one differs. |
+| Brok can't create chats | Certain | Med | You create each specialist chat once (sidebar group "Specialists"); Brok finds and proposes them |
+| Session ids change (archived chat, new machine) | Med | Med | The roster checks targets against list_sessions on `/brok on` and flags stale ones |
+| Brok starts doing the work itself instead of routing | Med | Med | The role forbids project edits. Brok's chat lives in brain with no project scope, and the K2 log makes drift visible. |
+| Voice latency through inbox → mod timer (4 s poll) | Med | Low | Speak the acknowledgement as soon as the inbox accepts the message. Speed up the mod's poll while Brok mode is on. |
+| Laundering: Brok asks a specialist to do what Brok's own session refused | Low | High | Role rule plus the specialists' own gates. Harness holds still come to the Hub. |
+| Two machines both run a Brok | Med | Low | Brok state is per machine, and each machine's Brok routes to that machine's chats |
+
+## Dependencies
+- Claude Code desktop app session tools (`SendMessage`, `ListAgents`, `list_sessions`,
+  `list_events`, `set_remote_control`) and `PushNotification`.
+- The `team` mod (`mods/team`), dashboard harness API, voice daemon bridge (`voice/bridge`).
+
+## Open Questions
+- Which specialist chats to create first? Proposed: Trip Fairy, Boomin Beats, Baseline, brain.
+- Does Brok's chat stay in brain, or in a neutral folder? Brain is proposed, since the tracker
+  and the dashboard live there.
+- Should replies to voice be short summaries (spoken) with the full text in the Hub? Proposed: yes.
+
+## Decisions Log
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Specialists | Both app chats and harness agents | Chats for project work you may take over; harness for background jobs | 2026-11-07 |
+| Interfaces | Pinned chat, voice, Hub, phone | User choice | 2026-11-07 |
+| Autonomy | Route and report | Brok hands off and follows up; specialists keep their own gates | 2026-11-07 |
+| Where Brok runs | A desktop app chat | Only app chats can reach other chats and Remote Control | 2026-11-07 |
+| How Brok is built | `/brok on` in the existing team mod | Reuses polling, prompt.submit delivery, team tools; turn.complete gives reply capture | 2026-11-07 |
+| Roster storage | Dashboard DB, per machine | Session ids are machine-local | 2026-11-07 |
+| Routing | Model judgment over the roster | A classifier adds nothing over a short roster | 2026-11-07 |
+
+## Handoff Readiness (for /scaffold or /build)
+- Tech stack: decided (team mod + dashboard + voice bridge, no new runtime).
+- Structure: `mods/team/hooks/` (brok mode), `dashboard/brok.py` + routes, `web/hub.js` panel,
+  `voice/bridge/brok.py`.
+- Entry points: `/brok on` in the Brok chat; `/api/brok/*`; daemon bridge setting.
+- Unresolved: K0 results (permission-mode behavior of cross-session delivery).
+
+## Dash — Revision 1 (2026-11-07): the team, personas, Duet
+
+**Name.** The primary is **Dash ⚡** (Brok is retired). Commands become `/dash on`, the API
+becomes `/api/dash`, and the table is `dash_team`.
+
+**Primary chat: a new, dedicated chat.** Not this brain chat: this one carries the whole brain
+build history and gets compacted often. Dash should stay lean and live for a long time. Brain
+becomes one of the specialists (Archie). Dash's chat runs in brain, where the dashboard and the
+tracker live, and does no project work itself.
+
+**The team.** Each member has a name, an emoji, a role and a short personality. The persona
+lives on the dashboard (per machine, by session id or agent name). The mod adds it to that chat's
+system prompt, and the chat title carries the emoji, so the sidebar reads as a team.
+
+| Symbol | Name | Kind | Handles | Personality |
+|---|---|---|---|---|
+| ⚡ | Dash | chat (primary) | Routes, follows up, summarizes | Fast, upbeat chief of staff: one-line headlines, details on request |
+| 🧠 | Archie | chat | brain | Dry systems architect, thinks in interfaces |
+| 🧚 | Fae | chat | Trip Fairy | Upbeat product person, travel nerd |
+| 🎧 | Deck | chat | Boomin Beats | DJ energy, short and punchy |
+| 💓 | Pulse | chat | Baseline | Calm coach, data first |
+| 🏠 | Hearth | chat | Home infrastructure and devices | Careful sysadmin: inventories first, checks before touching anything |
+| 📈 | Ledger | chat (finance lead) | Finance; runs three subagents | Skeptical, numbers first, always names the risk |
+| 🎲 | ↳ Quant | Ledger subagent | Trading project (`vault/prediction_market_bot`) | Probabilistic, terse |
+| 🏦 | ↳ Vault | Ledger subagent | Holdings and investment accounts | Conservative, precise |
+| 🔎 | ↳ Sleuth | Ledger subagent | General finance research | Curious, cites sources |
+| per role | harness teams | agents | Research, review, debate, pipelines | From the agent library |
+
+- **Hearth** is modeled on the user's "personal OS" project on claude.ai. The user pastes its
+  instructions, and Hearth adds a device inventory. Hearth works in a new
+  `~/Desktop/Code/home` folder: `devices.md`, the network, services, runbooks. It reads and
+  documents first. Any command against a device is the user's call, the same rule as push
+  and destructive commands.
+- **Ledger's subagents** are Claude Code subagents (`.claude/agents/` in a new
+  `~/Desktop/Code/finance` folder), spawned from Ledger's chat. The research one is named Sleuth
+  rather than Scout, because brain's global `scout` persona already uses that name.
+- **Finance boundaries.** Quant works on the prediction-market bot's code, data and backtests.
+  Vault works only from statements and CSV exports the user drops into `finance/data/`. It never
+  logs into brokerages or banks and never handles account credentials. No agent places trades,
+  moves money or presents itself as a licensed advisor. They analyze, research and explain, and
+  the decisions stay the user's.
+
+**High-level vs full context (layered reports).** Every Dash report starts with a one-line
+headline, then up to three bullets, then links: the specialist's chat (to take over) and the Hub
+thread. "More on X" makes Dash pull the specialist's own account from its transcript
+(`list_events`) instead of re-summarizing. "Open X" just gives the link. Spoken replies use the
+headline only.
+
+**Claude Duet: a fifth interface (user has access).** There's no official Duet ↔ Claude Code
+integration. A third-party bridge (calebgrimes/claude-duet-bridge) relays through a public
+Cloudflare Worker over a custom connector. Plan: build our own **narrow** connector instead. It is
+a small remote MCP server with OAuth that exposes only `ask_dash(text)` (posts to Dash's inbox)
+and `dash_status()` (open handoffs, recent headlines). Dash marks Duet-originated messages, since
+Duet reads email and a crafted email could try to push work through it. Anything those messages
+ask for that writes or acts needs the user's confirmation in chat. It needs a public relay (the
+dashboard is localhost-only), so it gets its own milestone with real auth, built after the inbox.
+
+### Milestones (revised)
+| # | Milestone | Description | Dependencies |
+|---|-----------|-------------|--------------|
+| K0 | Probe | Cross-session delivery and idle notice between chats in the same mode; list_events read; mod turn.complete capture; Remote Control from the phone; Duet custom-connector availability | — |
+| K1 | Dash role + team roster | `/dash on`, `dash_team` table + API with personas and emoji, persona injection per chat, emoji chat titles | K0 |
+| K2 | Dispatch & follow-up | Handoff log (tool.call hook), open handoffs, unprompted layered reports (headline / more / open) | K1 |
+| K3 | Dash inbox | `/api/dash` inbox + replies; mod delivers as turns, posts turn.complete answers back | K1 |
+| K4 | Hub Dash panel | Team board with symbols and states, conversation, composer, open handoffs, roster and persona editor | K2, K3 |
+| K5 | Voice → Dash | Daemon dash bridge (ack + result spoken as headlines); Hub switch Operator/Dash | K3 |
+| K6 | Phone | Remote Control on Dash, push notifications on finished handoffs | K2 |
+| K7 | Specialists | Create Archie/Fae/Deck/Pulse/Hearth/Ledger chats; `home/` with devices inventory; `finance/` with Quant/Vault/Sleuth subagents and data folder | K1 |
+| K8 | Duet connector | Narrow remote MCP (ask_dash, dash_status) with OAuth and a relay; Duet-origin marking and confirmation | K3 |
+
+### Decisions (revision 1)
+| Decision | Choice | Reasoning | Date |
+|----------|--------|-----------|------|
+| Primary's name | Dash ⚡ | User choice | 2026-11-07 |
+| Primary chat | New dedicated chat in brain | Lean context; brain becomes the Archie specialist | 2026-11-07 |
+| Symbols | Emoji | Render in sidebar titles, phone, Hub and terminal | 2026-11-07 |
+| Personas | Stored per member on the dashboard, injected by the mod | Works in any chat regardless of folder | 2026-11-07 |
+| Finance structure | Ledger chat + three Claude Code subagents | User asked for subagents under one finance chat | 2026-11-07 |
+| Finance limits | Analysis and research only; no trading, money movement, credentials or advisor role | Safety boundary | 2026-11-07 |
+| Duet | Own narrow connector, Duet-origin requests confirmed | The third-party bridge is broader than needed and Duet reads email | 2026-11-07 |
+
+### Open questions (revision 1)
+- Paste the personal OS project's instructions so Hearth can follow its pattern.
+- What devices go in Hearth's inventory first?
+- Where to host the Duet relay: Cloudflare Worker (free tier) or a tunnel to the dashboard?
+  A Worker is proposed: it keeps the dashboard off the internet.
